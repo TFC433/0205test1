@@ -1,11 +1,10 @@
 /**
  * services/service-container.js
  * 服務容器 (IoC Container)
- * * @version 7.9.5 (Phase 7: Announcement Full SQL)
- * * @date 2026-02-05
+ * * @version 8.0.0 (Phase 4: Announcement & Opportunity Full SQL)
+ * * @date 2026-02-06
  * * @description
- * - Phase 7: Announcement migrated to Full SQL (Read/Write).
- * - Removed Sheet Reader/Writer injection from AnnouncementService.
+ * - Injected OpportunitySqlWriter into OpportunityService.
  */
 
 const config = require('../config');
@@ -38,13 +37,14 @@ const ContactSqlWriter = require('../data/contact-sql-writer');
 const CompanyWriter = require('../data/company-writer');
 const CompanySqlWriter = require('../data/company-sql-writer'); 
 const OpportunityWriter = require('../data/opportunity-writer');
+const OpportunitySqlWriter = require('../data/opportunity-sql-writer'); // [Added]
 const InteractionWriter = require('../data/interaction-writer');
 const EventLogWriter = require('../data/event-log-writer');
 const SystemWriter = require('../data/system-writer');
 const WeeklyBusinessWriter = require('../data/weekly-business-writer');
 const WeeklyBusinessSqlWriter = require('../data/weekly-business-sql-writer');
 const AnnouncementWriter = require('../data/announcement-writer');
-const AnnouncementSqlWriter = require('../data/announcement-sql-writer'); // NEW
+const AnnouncementSqlWriter = require('../data/announcement-sql-writer');
 const ProductWriter = require('../data/product-writer');
 
 // --- Import Domain Services ---
@@ -80,7 +80,7 @@ let services = null;
 async function initializeServices() {
     if (services) return services;
 
-    console.log('🚀 [System] 正在初始化 Service Container (v7.9.5 Phase 7 Announcement Full SQL)...');
+    console.log('🚀 [System] 正在初始化 Service Container (v8.0.0 Phase 4 SQL)...');
 
     try {
         // 1. Infrastructure
@@ -129,6 +129,7 @@ async function initializeServices() {
             opportunityReader,
             contactCoreReader
         );
+        const opportunitySqlWriter = new OpportunitySqlWriter(); // [Added]
 
         const interactionWriter = new InteractionWriter(sheets, config.IDS.CORE, interactionReader);
         const eventLogWriter = new EventLogWriter(sheets, config.IDS.CORE, eventLogReader);
@@ -137,7 +138,7 @@ async function initializeServices() {
         const weeklySqlWriter = new WeeklyBusinessSqlWriter();
 
         const announcementWriter = new AnnouncementWriter(sheets, config.IDS.CORE, announcementReader);
-        const announcementSqlWriter = new AnnouncementSqlWriter(); // ✅ Init SQL Writer
+        const announcementSqlWriter = new AnnouncementSqlWriter();
 
         const systemWriter = new SystemWriter(sheets, config.IDS.SYSTEM, systemReader);
         const productWriter = new ProductWriter(sheets, config.IDS.PRODUCT, productReader);
@@ -146,7 +147,6 @@ async function initializeServices() {
         const calendarService = new CalendarService(calendar);
         const authService = new AuthService(systemReader, systemWriter);
 
-        // ✅ Announcement Service: Pure SQL Injection
         const announcementService = new AnnouncementService({
             announcementSqlReader,
             announcementSqlWriter
@@ -188,6 +188,7 @@ async function initializeServices() {
             eventLogReader,
             systemReader,
             opportunitySqlReader,
+            opportunitySqlWriter, // [Added]
             contactService
         });
 

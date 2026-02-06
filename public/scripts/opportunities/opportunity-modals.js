@@ -16,7 +16,7 @@ const NewOppWizard = {
             mainContact: '',
             contactPhone: '',
             county: '',
-            sourceId: null // 用於名片轉入 (rowIndex)
+            sourceId: null // 用於名片轉入 (Contact rowIndex)
         }
     },
 
@@ -489,7 +489,14 @@ async function editOpportunity(opportunityId) {
         const opportunity = result.data.opportunityInfo;
 
         showModal('edit-opportunity-modal');
-        document.getElementById('edit-opportunity-rowIndex').value = opportunity.rowIndex;
+        // [Modified] Use opportunityId (hidden input or dataset) instead of rowIndex
+        const form = document.getElementById('edit-opportunity-form');
+        form.dataset.currentOppId = opportunity.opportunityId;
+        
+        // Also try to set hidden input if it exists, for robustness
+        const idInput = document.getElementById('edit-opportunity-id');
+        if(idInput) idInput.value = opportunity.opportunityId;
+
         document.getElementById('edit-opportunity-name').value = opportunity.opportunityName;
         document.getElementById('edit-customer-company').value = opportunity.customerCompany;
         document.getElementById('edit-main-contact').value = opportunity.mainContact;
@@ -652,7 +659,8 @@ async function handleCreateAndLinkContact(e) {
 }
 
 // 4. 關聯母機會 Modal
-function showLinkOpportunityModal(currentOppId, currentOppRowIndex) {
+// [Modified] Use currentOppId only
+function showLinkOpportunityModal(currentOppId) {
     showModal('link-opportunity-modal');
     const searchInput = document.getElementById('search-opportunity-to-link-input');
     const resultsContainer = document.getElementById('opportunity-to-link-results');
@@ -666,8 +674,9 @@ function showLinkOpportunityModal(currentOppId, currentOppRowIndex) {
             const filtered = opportunities.filter(opp => opp.opportunityId !== currentOppId);
 
             if (filtered.length > 0) {
+                // [Modified] Pass currentOppId to handleLinkOpportunity
                 resultsContainer.innerHTML = filtered.map(opp => `
-                    <div class="kanban-card" style="cursor: pointer; margin-bottom:8px;" onclick='handleLinkOpportunity(${currentOppRowIndex}, "${opp.opportunityId}")'>
+                    <div class="kanban-card" style="cursor: pointer; margin-bottom:8px;" onclick='handleLinkOpportunity("${currentOppId}", "${opp.opportunityId}")'>
                         <div class="card-title">${opp.opportunityName}</div>
                         <div class="card-company">${opp.customerCompany}</div>
                     </div>
@@ -686,10 +695,11 @@ function showLinkOpportunityModal(currentOppId, currentOppRowIndex) {
     };
 }
 
-async function handleLinkOpportunity(currentOppRowIndex, parentOppId) {
+async function handleLinkOpportunity(currentOppId, parentOppId) {
     showLoading('正在建立關聯...');
     try {
-        const result = await authedFetch(`/api/opportunities/${currentOppRowIndex}`, {
+        // [Modified] PUT by ID
+        const result = await authedFetch(`/api/opportunities/${currentOppId}`, {
             method: 'PUT',
             body: JSON.stringify({ parentOpportunityId: parentOppId })
         });
@@ -724,6 +734,7 @@ document.addEventListener('submit', async function(e) {
             currentStage: document.getElementById('wiz-stage').value,
             notes: document.getElementById('wiz-notes').value,
             
+            // sourceId from wizard is usually Contact rowIndex for "upgrade".
             rowIndex: stateData.sourceId 
         };
 
@@ -731,6 +742,7 @@ document.addEventListener('submit', async function(e) {
         try {
             let url = '/api/opportunities';
             if (payload.rowIndex) {
+                // Keep this path if it's for contact upgrade (Legacy RAW)
                 url = `/api/contacts/${payload.rowIndex}/upgrade`;
             }
             const result = await authedFetch(url, { method: 'POST', body: JSON.stringify(payload) });
@@ -752,7 +764,12 @@ document.addEventListener('submit', async function(e) {
         e.preventDefault();
         showLoading('正在儲存編輯...');
         try {
-            const rowIndex = document.getElementById('edit-opportunity-rowIndex').value;
+            // [Modified] Retrieve opportunityId from dataset or hidden input
+            const form = document.getElementById('edit-opportunity-form');
+            const opportunityId = form.dataset.currentOppId || document.getElementById('edit-opportunity-id')?.value;
+            
+            if (!opportunityId) throw new Error("無法識別機會 ID");
+
             const modifier = getCurrentUser();
             const companyName = document.getElementById('edit-customer-company').value;
             const newCounty = document.getElementById('edit-company-county').value;
@@ -770,7 +787,8 @@ document.addEventListener('submit', async function(e) {
             };
             
             const promises = [
-                authedFetch(`/api/opportunities/${rowIndex}`, { method: 'PUT', body: JSON.stringify(updateOpportunityData) })
+                // [Modified] PUT by ID
+                authedFetch(`/api/opportunities/${opportunityId}`, { method: 'PUT', body: JSON.stringify(updateOpportunityData) })
             ];
             if (newCounty) {
                 const encodedCompanyName = encodeURIComponent(companyName);

@@ -1,8 +1,8 @@
 // routes/opportunity.routes.js
 /**
  * Opportunity Routes
- * * @version 5.1.0 (Phase 3 - Service Locator Pattern)
- * @date 2026-01-13
+ * * @version 6.0.0 (Phase 4 - SQL Transition - Write Authority)
+ * @date 2026-02-06
  */
 
 const express = require('express');
@@ -47,13 +47,13 @@ router.put('/batch', (req, res, next) => {
     getController(req).batchUpdateOpportunities(req, res, next);
 });
 
-// PUT /api/opportunities/:rowIndex
-router.put('/:rowIndex', (req, res, next) => {
+// PUT /api/opportunities/:opportunityId
+router.put('/:opportunityId', (req, res, next) => {
     getController(req).updateOpportunity(req, res, next);
 });
 
-// DELETE /api/opportunities/:rowIndex
-router.delete('/:rowIndex', (req, res, next) => {
+// DELETE /api/opportunities/:opportunityId
+router.delete('/:opportunityId', (req, res, next) => {
     getController(req).deleteOpportunity(req, res, next);
 });
 

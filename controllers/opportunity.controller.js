@@ -1,10 +1,9 @@
 // controllers/opportunity.controller.js
 /**
  * OpportunityController
- * * @version 5.2.0 (Phase 3 - Class Refactoring - Fix Layering)
- * @date 2026-01-20
- * @description 機會案件控制器，最複雜的業務模組。
- * [Fix] 移除對 Reader/Writer 的直接依賴，全面透過 OpportunityService。
+ * * @version 6.0.0 (Phase 4 - SQL Transition - ID Based)
+ * @date 2026-02-06
+ * @description 機會案件控制器，已移除所有 rowIndex 依賴，全面轉向 opportunityId。
  */
 
 const { handleApiError } = require('../middleware/error.middleware');
@@ -38,7 +37,6 @@ class OpportunityController {
     // GET /api/opportunities/by-county
     getOpportunitiesByCounty = async (req, res) => {
         try {
-            // [Fix] Layering: Call Service instead of Reader
             const result = await this.opportunityService.getOpportunitiesByCounty(req.query.opportunityType);
             res.json(result);
         } catch (error) {
@@ -53,7 +51,6 @@ class OpportunityController {
             const filters = { assignee, type, stage };
             Object.keys(filters).forEach(key => (filters[key] === undefined || filters[key] === '') && delete filters[key]);
             
-            // [Fix] Layering: Call Service instead of Reader
             const result = await this.opportunityService.searchOpportunities(q, parseInt(page), filters);
             res.json(result);
         } catch (error) {
@@ -85,7 +82,6 @@ class OpportunityController {
     // PUT /api/opportunities/batch
     batchUpdateOpportunities = async (req, res) => {
         try {
-            // [Fix] Layering: Call Service instead of Writer
             const result = await this.opportunityService.batchUpdateOpportunities(req.body.updates);
             res.json(result);
         } catch (error) {
@@ -93,11 +89,12 @@ class OpportunityController {
         }
     };
 
-    // PUT /api/opportunities/:rowIndex
+    // PUT /api/opportunities/:opportunityId
     updateOpportunity = async (req, res) => {
         try {
+            // [Modified] Extract opportunityId string, no parseInt
             const result = await this.opportunityService.updateOpportunity(
-                parseInt(req.params.rowIndex), 
+                req.params.opportunityId, 
                 req.body, 
                 req.user
             );
@@ -107,11 +104,12 @@ class OpportunityController {
         }
     };
 
-    // DELETE /api/opportunities/:rowIndex
+    // DELETE /api/opportunities/:opportunityId
     deleteOpportunity = async (req, res) => {
         try {
+            // [Modified] Extract opportunityId string, no parseInt
             const result = await this.opportunityService.deleteOpportunity(
-                parseInt(req.params.rowIndex), 
+                req.params.opportunityId, 
                 req.user
             );
             res.json(result);

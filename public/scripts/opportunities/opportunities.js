@@ -222,7 +222,8 @@ function handleOpportunitiesClick(e) {
             handleOppSort(payload.field);
             break;
         case 'delete-opp':
-            confirmDeleteOpportunity(payload.rowIndex, payload.name);
+            // [Modified] Use oppId instead of rowIndex
+            confirmDeleteOpportunity(payload.oppId, payload.name);
             break;
         case 'clear-filters':
             clearAllOppFilters();
@@ -515,7 +516,7 @@ function renderOpportunitiesTable(opportunities) {
                 <td class="col-actions">
                     <button class="btn-mini-delete" title="刪除案件" 
                             data-action="delete-opp" 
-                            data-row-index="${opp.rowIndex}" 
+                            data-opp-id="${opp.opportunityId}" 
                             data-name="${safeOppName}">
                         <svg style="width:18px;height:18px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                     </button>
@@ -601,13 +602,14 @@ function renderOppStageChart(data) {
     });
 }
 
-async function confirmDeleteOpportunity(rowIndex, opportunityName) {
-    if (!rowIndex) { showNotification('無法刪除：缺少必要的紀錄索引。', 'error'); return; }
+async function confirmDeleteOpportunity(oppId, opportunityName) {
+    if (!oppId) { showNotification('無法刪除：缺少必要的紀錄 ID。', 'error'); return; }
     const message = `您確定要"永久刪除"\n機會案件 "${opportunityName || '(未命名)'}" 嗎？\n此操作無法復原！`;
     showConfirmDialog(message, async () => {
         showLoading('正在刪除...');
         try {
-            const result = await authedFetch(`/api/opportunities/${rowIndex}`, { method: 'DELETE' });
+            // [Modified] DELETE by ID
+            const result = await authedFetch(`/api/opportunities/${oppId}`, { method: 'DELETE' });
             if (result.success) {
                 await loadOpportunities(document.getElementById('opportunities-list-search')?.value || '');
             } else { throw new Error(result.details || '刪除操作失敗'); }
