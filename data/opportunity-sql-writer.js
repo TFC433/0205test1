@@ -1,10 +1,11 @@
 // data/opportunity-sql-writer.js
 /**
  * OpportunitySqlWriter
- * * @version 1.0.1 (Phase 7 - Date Patch)
+ * * @version 1.0.2 (Phase 7 - Drive Link Patch)
  * @date 2026-02-06
  * @description 負責將機會案件寫入 Supabase 'opportunities' 資料表。
  * - [PATCH] Normalize empty date strings to null for PostgreSQL compatibility.
+ * - [PATCH] Added missing mapping for drive_link in updateOpportunity.
  */
 
 const { supabase } = require('../config/supabase');
@@ -136,6 +137,7 @@ class OpportunitySqlWriter {
         if (updateData.potentialSpecification !== undefined) dbPayload.product_details = updateData.potentialSpecification;
         
         if (updateData.notes !== undefined) dbPayload.notes = updateData.notes;
+        if (updateData.driveFolderLink !== undefined) dbPayload.drive_link = updateData.driveFolderLink;
         if (updateData.stageHistory !== undefined) dbPayload.stage_history = updateData.stageHistory;
         if (updateData.parentOpportunityId !== undefined) dbPayload.parent_opportunity_id = updateData.parentOpportunityId;
 

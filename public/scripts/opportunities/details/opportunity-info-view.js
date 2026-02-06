@@ -5,6 +5,7 @@
 // 修改紀錄：[2026-02-06] Phase 7 Patch: 
 // 1. Added SQL JSONB Object support (no double parsing)
 // 2. Added Probability field fallback
+// 3. [FIX] Reverted responsibility boundary: Removed Edit Mode containers.
 // -------------------------------------------------------------------------
 
 const OpportunityInfoView = (() => {
