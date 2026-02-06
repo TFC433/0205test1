@@ -1,8 +1,10 @@
-// public/scripts/opportunity-details/opportunity-info-view.js
+// public/scripts/opportunities/details/opportunity-info-view.js
 // -------------------------------------------------------------------------
 // 檔案職責：專門負責「機會核心資訊」的純顯示模式 (Read-Only UI)
 // UI 風格：Final Polish + Bento Grid Optimization
-// 修改紀錄：[2026-02-04] Phase 7 SQL Type Fix: 使用 Number() 處理機會價值型別
+// 修改紀錄：[2026-02-06] Phase 7 Patch: 
+// 1. Added SQL JSONB Object support (no double parsing)
+// 2. Added Probability field fallback
 // -------------------------------------------------------------------------
 
 const OpportunityInfoView = (() => {
@@ -432,7 +434,21 @@ const OpportunityInfoView = (() => {
         // 2. 規格 Tags 生成
         let specsContent = '<span style="color:var(--text-muted); font-style:italic; padding:4px;">(尚未指定規格)</span>';
         try {
-            const parsed = JSON.parse(opp.potentialSpecification);
+            // [PATCH] Handle BOTH SQL JSONB (Object) and Legacy String
+            const rawSpec = opp.potentialSpecification;
+            let parsed = null;
+
+            if (typeof rawSpec === 'object' && rawSpec !== null) {
+                parsed = rawSpec;
+            } else if (typeof rawSpec === 'string') {
+                try {
+                    parsed = JSON.parse(rawSpec);
+                } catch(e) {
+                    // Fallback if parsing fails, but don't crash
+                    console.warn('[OpportunityInfoView] Spec parse error:', e);
+                }
+            }
+
             if (parsed && typeof parsed === 'object') {
                 const entries = Object.entries(parsed);
                 if (entries.length > 0) {
@@ -449,7 +465,9 @@ const OpportunityInfoView = (() => {
                     }).join('');
                 }
             }
-        } catch (e) {}
+        } catch (e) {
+             console.error('[OpportunityInfoView] Spec render error', e);
+        }
 
         // 3. 數值與日期
         // [Phase 7 SQL Type Safety Fix] Ensure value is string before replace, use Number()
@@ -462,6 +480,9 @@ const OpportunityInfoView = (() => {
         const closeDate = opp.expectedCloseDate ? opp.expectedCloseDate.split('T')[0] : '-';
         
         const notesContent = opp.notes || '<span style="color:var(--text-muted);">(無備註內容)</span>';
+
+        // [PATCH] Support multiple field names for Probability (SQL vs Sheet)
+        const displayProbability = opp.orderProbability || opp.winProbability || opp.win_probability || '-';
 
         return `
             <div class="opp-view-container">
@@ -510,7 +531,7 @@ const OpportunityInfoView = (() => {
                     </div>
                     <div class="big-stat-card">
                         <span class="unified-label">下單機率</span>
-                        <span class="stat-value" style="color: var(--text-primary);">${opp.orderProbability || '-'}</span>
+                        <span class="stat-value" style="color: var(--text-primary);">${displayProbability}</span>
                     </div>
                 </div>
 

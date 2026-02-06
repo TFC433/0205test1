@@ -1,9 +1,10 @@
 // data/opportunity-sql-writer.js
 /**
  * OpportunitySqlWriter
- * * @version 1.0.0 (Phase 4 - SQL Transition)
+ * * @version 1.0.1 (Phase 7 - Date Patch)
  * @date 2026-02-06
  * @description 負責將機會案件寫入 Supabase 'opportunities' 資料表。
+ * - [PATCH] Normalize empty date strings to null for PostgreSQL compatibility.
  */
 
 const { supabase } = require('../config/supabase');
@@ -25,6 +26,10 @@ class OpportunitySqlWriter {
 
         const now = new Date().toISOString();
         const newId = `OPP${Date.now()}`;
+
+        // [Date Normalization]
+        // PostgreSQL rejects "" for date types. Convert "" to null.
+        const expectedCloseDate = (data.expectedCloseDate === "") ? null : data.expectedCloseDate;
 
         // Map DTO to DB Columns
         const dbPayload = {
@@ -50,7 +55,7 @@ class OpportunitySqlWriter {
             current_status: '進行中', // Default active
             
             // Metrics
-            expected_close_date: data.expectedCloseDate,
+            expected_close_date: expectedCloseDate,
             opportunity_value: data.opportunityValue,
             win_probability: data.orderProbability, // Map orderProbability -> win_probability
             
@@ -119,7 +124,11 @@ class OpportunitySqlWriter {
         if (updateData.currentStage !== undefined) dbPayload.current_stage = updateData.currentStage;
         if (updateData.currentStatus !== undefined) dbPayload.current_status = updateData.currentStatus;
         
-        if (updateData.expectedCloseDate !== undefined) dbPayload.expected_close_date = updateData.expectedCloseDate;
+        // [Date Normalization]
+        if (updateData.expectedCloseDate !== undefined) {
+            dbPayload.expected_close_date = (updateData.expectedCloseDate === "") ? null : updateData.expectedCloseDate;
+        }
+
         if (updateData.opportunityValue !== undefined) dbPayload.opportunity_value = updateData.opportunityValue;
         if (updateData.orderProbability !== undefined) dbPayload.win_probability = updateData.orderProbability;
         
