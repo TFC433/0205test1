@@ -292,7 +292,7 @@ const OpportunityInfoCardEvents = (() => {
 
         showLoading('正在儲存...');
         try {
-            const result = await authedFetch(`/api/opportunities/${_currentOppForEditing.rowIndex}`, {
+            const result = await authedFetch(`/api/opportunities/${_currentOppForEditing.opportunityId}`, {
                 method: 'PUT',
                 body: JSON.stringify({ ...updateData, modifier: getCurrentUser() })
             });

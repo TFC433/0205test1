@@ -446,7 +446,7 @@ const OpportunityAssociatedOpps = (() => {
         showConfirmDialog('您確定要移除此母機會關聯嗎？', async () => {
             showLoading('正在移除關聯...');
             try {
-                const result = await authedFetch(`/api/opportunities/${rowIndex}`, {
+                const result = await authedFetch(`/api/opportunities/${opportunityInfo.opportunityId}`, {
                     method: 'PUT',
                     body: JSON.stringify({ parentOpportunityId: '', modifier: getCurrentUser() })
                 });
