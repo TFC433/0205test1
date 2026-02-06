@@ -1,12 +1,13 @@
 /**
  * services/opportunity-service.js
  * 機會案件業務邏輯層 (Service Layer)
- * * @version 8.1.0 (Phase 7: Boundary Fix v1)
+ * * @version 8.2.0 (Phase 7: Contact Linking SQL)
  * @date 2026-02-06
  * @description 
  * - [FIX-1] Locked _fetchOpportunities to SQL Reader only (No Sheet fallback).
  * - [FIX-2] Enforced hard contract on batchUpdateOpportunities (Throw on missing ID).
  * - [FIX-3] Explicitly marked RAW Contact Upgrade boundary.
+ * - [PHASE 7] Migrated Contact Linking (Add/Delete) to SQL Writer.
  */
 
 class OpportunityService {
@@ -317,9 +318,8 @@ class OpportunityService {
 
                 // ================================
                 // RAW CONTACT UPGRADE ZONE
-                // Scope: IDS.RAW ONLY
-                // rowIndex usage is ALLOWED here
-                // This logic MUST NOT be reused for CORE Opportunity logic
+                // Scope: IDS.RAW ONLY (Contact Module)
+                // rowIndex usage is ALLOWED here (Contact is not Phase 7)
                 // ================================
                 if (contactData.rowIndex) {
                     logTitle = '從潛在客戶關聯';
@@ -330,7 +330,9 @@ class OpportunityService {
                 }
             }
 
-            const linkResult = await this.opportunityWriter.linkContactToOpportunity(opportunityId, contactToLink.id, modifier);
+            // [Phase 7 Migration] SQL Write Authority
+            // Old: await this.opportunityWriter.linkContactToOpportunity(opportunityId, contactToLink.id, modifier);
+            const linkResult = await this.opportunitySqlWriter.linkContact(opportunityId, contactToLink.id, modifier);
             
             await this._logOpportunityInteraction(
                 opportunityId,
@@ -357,7 +359,9 @@ class OpportunityService {
             const contact = allContacts.find(c => c.contactId === contactId);
             const contactName = contact ? contact.name : `ID ${contactId}`;
 
-            const deleteResult = await this.opportunityWriter.deleteContactLink(opportunityId, contactId);
+            // [Phase 7 Migration] SQL Write Authority
+            // Old: await this.opportunityWriter.deleteContactLink(opportunityId, contactId);
+            const deleteResult = await this.opportunitySqlWriter.unlinkContact(opportunityId, contactId);
 
             if (deleteResult.success) {
                 await this._logOpportunityInteraction(

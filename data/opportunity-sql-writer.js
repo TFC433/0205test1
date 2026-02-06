@@ -1,11 +1,12 @@
 // data/opportunity-sql-writer.js
 /**
  * OpportunitySqlWriter
- * * @version 1.0.2 (Phase 7 - Drive Link Patch)
+ * * @version 1.1.0 (Phase 7 - Contact Linking SQL)
  * @date 2026-02-06
  * @description 負責將機會案件寫入 Supabase 'opportunities' 資料表。
  * - [PATCH] Normalize empty date strings to null for PostgreSQL compatibility.
  * - [PATCH] Added missing mapping for drive_link in updateOpportunity.
+ * - [FEAT] Added linkContact and unlinkContact methods for SQL-based linking.
  */
 
 const { supabase } = require('../config/supabase');
@@ -174,6 +175,57 @@ class OpportunitySqlWriter {
         }
 
         return { success: true };
+    }
+
+    /**
+     * 關聯聯絡人至機會 (SQL)
+     * @param {string} opportunityId
+     * @param {string} contactId
+     * @param {string} modifier
+     */
+    async linkContact(opportunityId, contactId, modifier) {
+        console.log(`🔗 [OpportunitySqlWriter] Link: ${opportunityId} <-> ${contactId}`);
+        const now = new Date().toISOString();
+        
+        // Upsert to link table (assuming 'opportunity_contact_links')
+        // Using upsert to handle re-linking smoothly
+        const { error } = await supabase
+            .from('opportunity_contact_links')
+            .upsert({
+                opportunity_id: opportunityId,
+                contact_id: contactId,
+                link_status: 'active',
+                updated_time: now,
+                updated_by: modifier
+            }, { onConflict: 'opportunity_id, contact_id' });
+
+        if (error) {
+            console.error('[OpportunitySqlWriter] Link Error:', error);
+            throw new Error(`Link Error: ${error.message}`);
+        }
+        return { success: true };
+    }
+
+    /**
+     * 解除聯絡人關聯 (SQL)
+     * @param {string} opportunityId
+     * @param {string} contactId
+     */
+    async unlinkContact(opportunityId, contactId) {
+         console.log(`🔗 [OpportunitySqlWriter] Unlink: ${opportunityId} <-> ${contactId}`);
+         
+         // Physical delete (Unlink)
+         const { error } = await supabase
+            .from('opportunity_contact_links')
+            .delete()
+            .eq('opportunity_id', opportunityId)
+            .eq('contact_id', contactId);
+            
+         if (error) {
+             console.error('[OpportunitySqlWriter] Unlink Error:', error);
+             throw new Error(`Unlink Error: ${error.message}`);
+         }
+         return { success: true };
     }
 }
 
