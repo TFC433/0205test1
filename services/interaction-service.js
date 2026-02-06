@@ -1,23 +1,22 @@
-/**
- * services/interaction-service.js
- * 互動紀錄業務邏輯層
- * * @version 6.2.0 (Phase 6-2 - SQL First Preparation)
- * @date 2026-01-30
- * @description 負責處理互動紀錄的查詢、排序、過濾、分頁與 Join。[Standard A] 承擔完整邏輯。
- * 依賴注入：InteractionReader, InteractionWriter, OpportunityReader, CompanyReader, InteractionSqlReader(Optional)
+/*
+ * FILE: services/interaction-service.js
+ * VERSION: 7.0.0
+ * DATE: 2026-02-06
+ * CHANGELOG:
+ * - Phase 7: Migrate Interaction Write Authority to SQL
  */
 
 class InteractionService {
     /**
      * @param {InteractionReader} interactionReader 
-     * @param {InteractionWriter} interactionWriter 
+     * @param {InteractionSqlWriter} interactionSqlWriter 
      * @param {OpportunityReader} opportunityReader 
      * @param {CompanyReader} companyReader 
      * @param {Object} [interactionSqlReader=null] Optional SQL Reader for Phase 6-2
      */
-    constructor(interactionReader, interactionWriter, opportunityReader, companyReader, interactionSqlReader = null) {
+    constructor(interactionReader, interactionSqlWriter, opportunityReader, companyReader, interactionSqlReader = null) {
         this.interactionReader = interactionReader;
-        this.interactionWriter = interactionWriter;
+        this.interactionSqlWriter = interactionSqlWriter;
         this.opportunityReader = opportunityReader;
         this.companyReader = companyReader;
         this.interactionSqlReader = interactionSqlReader;
@@ -181,14 +180,19 @@ class InteractionService {
 
     /**
      * 新增互動紀錄
+     * Phase 7: Direct to SQL
      * @param {Object} data 
      * @param {Object} user 
      */
     async createInteraction(data, user) {
         try {
             const safeUser = user || {};
-            const newId = await this.interactionWriter.createInteraction(data, safeUser);
-            this.interactionReader.invalidateCache('interactions');
+            const newId = await this.interactionSqlWriter.createInteraction(data, safeUser);
+            
+            // Invalidate Reader Cache
+            if (this.interactionReader.invalidateCache) {
+                this.interactionReader.invalidateCache('interactions');
+            }
             return { success: true, id: newId };
         } catch (error) {
             console.error('[InteractionService] createInteraction Error:', error);
@@ -198,6 +202,7 @@ class InteractionService {
 
     /**
      * 更新互動紀錄
+     * Phase 7: Direct to SQL
      * @param {string} id 
      * @param {Object} data 
      * @param {Object} user 
@@ -205,8 +210,12 @@ class InteractionService {
     async updateInteraction(id, data, user) {
         try {
             const safeUser = user || {};
-            await this.interactionWriter.updateInteraction(id, data, safeUser);
-            this.interactionReader.invalidateCache('interactions');
+            await this.interactionSqlWriter.updateInteraction(id, data, safeUser);
+            
+            // Invalidate Reader Cache
+            if (this.interactionReader.invalidateCache) {
+                this.interactionReader.invalidateCache('interactions');
+            }
             return { success: true };
         } catch (error) {
             console.error('[InteractionService] updateInteraction Error:', error);
@@ -216,14 +225,19 @@ class InteractionService {
 
     /**
      * 刪除互動紀錄
+     * Phase 7: Direct to SQL
      * @param {string} id 
      * @param {Object} user 
      */
     async deleteInteraction(id, user) {
         try {
             const safeUser = user || {};
-            await this.interactionWriter.deleteInteraction(id, safeUser);
-            this.interactionReader.invalidateCache('interactions');
+            await this.interactionSqlWriter.deleteInteraction(id, safeUser);
+            
+            // Invalidate Reader Cache
+            if (this.interactionReader.invalidateCache) {
+                this.interactionReader.invalidateCache('interactions');
+            }
             return { success: true };
         } catch (error) {
             console.error('[InteractionService] deleteInteraction Error:', error);
