@@ -1,34 +1,29 @@
-/**
- * services/event-log-service.js
- * 事件紀錄服務邏輯
- * @version 5.2.1 (Phase 6-2 - DI Fix)
- * @date 2026-02-02
- * @description
- * [Standard A] Join 邏輯集中在 Service；所有回傳物件皆 clone，避免污染 Reader Cache。
- * [Hotfix] 當 eventType 變更時，rowIndex 不可跨 sheet update，必須 delete + create (Move)。
- * [Fix] deleteEventLog: 修正 Controller 呼叫斷裂，新增 eventId 解析邏輯。
- * [DI Fix] 移除內部 require，改由 Service Container 注入 SqlReader。
- * 依賴注入：EventLogReader, EventLogWriter, OpportunityReader, CompanyReader, SystemReader, CalendarService, EventLogSqlReader
+/*
+ * FILE: services/event-log-service.js
+ * VERSION: 6.0.0
+ * DATE: 2026-02-09
+ * CHANGELOG:
+ * - Phase 7: Migrate EventLog Write Authority to SQL (Schema Locked)
  */
 
 class EventLogService {
     /**
      * @param {EventLogReader} eventReader 
-     * @param {EventLogWriter} eventWriter 
      * @param {OpportunityReader} oppReader 
      * @param {CompanyReader} companyReader 
      * @param {SystemReader} systemReader 
      * @param {CalendarService} calendarService 
-     * @param {EventLogSqlReader} [eventLogSqlReader] - Injected SQL Reader
+     * @param {EventLogSqlReader} eventLogSqlReader
+     * @param {EventLogSqlWriter} eventLogSqlWriter
      */
-    constructor(eventReader, eventWriter, oppReader, companyReader, systemReader, calendarService, eventLogSqlReader) {
+    constructor(eventReader, oppReader, companyReader, systemReader, calendarService, eventLogSqlReader, eventLogSqlWriter) {
         this.eventReader = eventReader;
-        this.eventWriter = eventWriter;
         this.oppReader = oppReader;
         this.companyReader = companyReader;
         this.systemReader = systemReader;
         this.calendarService = calendarService;
-        this.eventLogSqlReader = eventLogSqlReader; // [Fix] DI Injection
+        this.eventLogSqlReader = eventLogSqlReader;
+        this.eventLogSqlWriter = eventLogSqlWriter;
     }
 
     _invalidateEventCacheSafe() {
@@ -36,7 +31,6 @@ class EventLogService {
             if (this.eventReader && typeof this.eventReader.invalidateCache === 'function') {
                 this.eventReader.invalidateCache('eventLogs');
             } else if (this.eventReader && this.eventReader.cache) {
-                // fallback: clear all cache if invalidateCache is not available
                 this.eventReader.cache = {};
             }
         } catch (e) {
@@ -46,24 +40,19 @@ class EventLogService {
 
     async getAllEvents() {
         try {
-            // [SQL Read Priority with Fallback]
             let events;
             try {
                 if (this.eventLogSqlReader) {
                     events = await this.eventLogSqlReader.getEventLogs();
-                    // 簡易驗證：若 SQL 回傳非陣列或 null，視為失敗
                     if (!Array.isArray(events)) throw new Error('SQL returned invalid structure');
-                    console.log('[EventLogService] getAllEvents: Serving from SQL Reader');
                 } else {
                     throw new Error('SQL Reader not injected');
                 }
             } catch (sqlError) {
                 console.warn('[EventLogService] getAllEvents: SQL Read Failed, fallback to Sheet.', sqlError.message);
-                // Fallback: 使用原本的 Sheet Reader
                 events = await this.eventReader.getEventLogs();
             }
 
-            // [Modified] 將原本 Promise.all 中的 getEventLogs 移除，因為 events 已在上方取得
             const [opps, comps] = await Promise.all([
                 this.oppReader.getOpportunities(),
                 this.companyReader.getCompanyList()
@@ -73,14 +62,10 @@ class EventLogService {
             const compMap = new Map(comps.map(c => [c.companyId, c.companyName]));
 
             return events.map(raw => {
-                const e = { ...raw }; // clone
-
-                // alias for compatibility
+                const e = { ...raw };
                 if (!e.id && e.eventId) e.id = e.eventId;
-
                 if (e.opportunityId) e.opportunityName = oppMap.get(e.opportunityId) || e.opportunityId;
                 if (e.companyId) e.companyName = compMap.get(e.companyId) || e.companyId;
-
                 return e;
             });
         } catch (error) {
@@ -91,25 +76,22 @@ class EventLogService {
 
     async getEventById(eventId) {
         try {
-            // [SQL Read Priority with Fallback]
             let rawEvent;
             try {
                 if (this.eventLogSqlReader) {
                     rawEvent = await this.eventLogSqlReader.getEventLogById(eventId);
                     if (!rawEvent) throw new Error(`Event ${eventId} not found in SQL`);
-                    console.log(`[EventLogService] getEventById: Serving ${eventId} from SQL Reader`);
                 } else {
                     throw new Error('SQL Reader not injected');
                 }
             } catch (sqlError) {
                 console.warn(`[EventLogService] getEventById: SQL Read Failed for ${eventId}, fallback to Sheet.`, sqlError.message);
-                // Fallback: 使用原本的 Sheet Reader
                 rawEvent = await this.eventReader.getEventLogById(eventId);
             }
 
             if (!rawEvent) return null;
 
-            const event = { ...rawEvent }; // clone
+            const event = { ...rawEvent };
             if (!event.id && event.eventId) event.id = event.eventId;
 
             try {
@@ -137,18 +119,34 @@ class EventLogService {
     async createEvent(data, user) {
         try {
             const modifier = user?.displayName || user?.username || 'System';
+            
+            // Validate or Generate ID
+            const eventId = data.eventId || data.id || `evt_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
-            const result = await this.eventWriter.createEventLog(data, modifier);
+            // Strict Schema Mapping
+            const sqlPayload = {
+                event_id: eventId,
+                opportunity_id: data.opportunityId || null,
+                company_id: data.companyId || null,
+                event_type: data.eventType || null,
+                event_title: data.eventName || data.eventTitle || null,
+                content_summary: data.eventContent || data.contentSummary || null,
+                recorder: modifier,
+                created_time: data.createdTime ? new Date(data.createdTime) : new Date()
+            };
+
+            const result = await this.eventLogSqlWriter.createEventLog(sqlPayload);
             this._invalidateEventCacheSafe();
 
+            // Calendar Side Effect
             if (result.success && data.syncToCalendar === 'true') {
                 try {
-                    const startIso = new Date(data.createdTime || Date.now()).toISOString();
+                    const startIso = new Date(sqlPayload.created_time).toISOString();
                     const endIso = new Date(Date.now() + 3600000).toISOString();
 
                     const calendarEvent = {
-                        summary: `[${data.eventType}] ${data.eventName}`,
-                        description: data.eventContent || '',
+                        summary: `[${sqlPayload.event_type}] ${sqlPayload.event_title}`,
+                        description: sqlPayload.content_summary || '',
                         start: { dateTime: startIso },
                         end: { dateTime: endIso }
                     };
@@ -166,130 +164,48 @@ class EventLogService {
         }
     }
 
-    async updateEvent(rowIndex, data, user) {
+    async updateEventLog(idOrRowIndex, data, modifier) {
         try {
-            const modifier = user?.displayName || user?.username || 'System';
-            const result = await this.eventWriter.updateEventLog(rowIndex, data, modifier);
+            // Strict Phase 7 Check: Refuse Row Index
+            if (typeof idOrRowIndex === 'number' || (typeof idOrRowIndex === 'string' && !isNaN(Number(idOrRowIndex)))) {
+                throw new Error('[Phase 7] RowIndex is strictly prohibited. Use Event ID.');
+            }
+
+            const eventId = idOrRowIndex;
+            const user = modifier?.displayName || modifier || 'System';
+
+            // Strict Schema Mapping for Update (No created_time)
+            const sqlPayload = {};
+            if (data.opportunityId !== undefined) sqlPayload.opportunity_id = data.opportunityId;
+            if (data.companyId !== undefined) sqlPayload.company_id = data.companyId;
+            if (data.eventType !== undefined) sqlPayload.event_type = data.eventType;
+            
+            // Map legacy fields
+            if (data.eventName !== undefined) sqlPayload.event_title = data.eventName;
+            if (data.eventTitle !== undefined) sqlPayload.event_title = data.eventTitle;
+            
+            if (data.eventContent !== undefined) sqlPayload.content_summary = data.eventContent;
+            if (data.contentSummary !== undefined) sqlPayload.content_summary = data.contentSummary;
+            
+            sqlPayload.recorder = user;
+
+            const result = await this.eventLogSqlWriter.updateEventLog(eventId, sqlPayload);
             this._invalidateEventCacheSafe();
             return result;
         } catch (error) {
-            console.error(`[EventLogService] updateEvent Error (Row: ${rowIndex}):`, error);
+            console.error('[EventLogService] updateEventLog Error:', error);
             throw error;
         }
     }
 
-    /**
-     * [Proxy] 兼容舊 Controller：允許 eventId 或 rowIndex
-     * [Hotfix] 若 eventType 變更，必須 Move：delete(old sheet row) + create(new sheet row)
-     */
-    async updateEventLog(idOrRowIndex, data, modifier) {
-        // 1) 先嘗試拿到 eventId（前端可能傳 eventId，也可能只傳 rowIndex）
-        const inputEventId = data?.eventId || data?.id || null;
-
-        // 2) 先讀全列表（這裡是必要的：用來解析原始 rowIndex / 原 eventType）
-        // [Note] Update 流程必須依賴 Sheet 的 rowIndex，因此直接呼叫 Sheet Reader，不走 SQL fallback 邏輯
-        const logs = await this.eventReader.getEventLogs();
-
-        let original = null;
-
-        // 2a) 優先用 eventId 找原事件（最準）
-        if (inputEventId) {
-            original = logs.find(l => l.eventId === inputEventId) || null;
-        }
-
-        // 2b) 若找不到，再用 rowIndex 猜（風險較高，但保持相容）
-        if (!original) {
-            const candidateRow = Number(idOrRowIndex);
-            if (Number.isInteger(candidateRow)) {
-                original = logs.find(l => Number(l.rowIndex) === candidateRow) || null;
-            }
-        }
-
-        // 3) 若連原事件都找不到，就維持舊行為（交給 writer 報錯）
-        //    但我們先把 rowIndex 解析成數字
-        let rowIndex = idOrRowIndex;
-        if (typeof rowIndex === 'string' && isNaN(Number(rowIndex))) {
-            // 傳進來像 eventId 的情況：用 logs 查 rowIndex
-            const target = logs.find(l => l.eventId === rowIndex);
-            if (!target || !target.rowIndex) {
-                throw new Error(`Update Failed: Event ID '${rowIndex}' not found.`);
-            }
-            rowIndex = target.rowIndex;
-        }
-
-        rowIndex = Number(rowIndex);
-        if (!Number.isInteger(rowIndex)) {
-            throw new Error('Invalid resolved rowIndex');
-        }
-
-        // 4) Hotfix：偵測事件種類變更 -> Move
-        //    original 必須存在才做 move；否則走原本 update
-        if (original && data && data.eventType && original.eventType && data.eventType !== original.eventType) {
-            try {
-                // (A) 先刪舊的（用原 eventType + 原 rowIndex 才刪得到）
-                await this.eventWriter.deleteEventLog(original.rowIndex, original.eventType);
-
-                // (B) 再建新的：保留 eventId（避免前端之後找不到）
-                const payload = { ...data };
-                payload.eventId = original.eventId;
-                payload.id = original.eventId;
-
-                // createdTime 若沒帶，保留原本建立時間（避免時間變動造成排序/顯示怪異）
-                if (!payload.createdTime && original.createdTime) payload.createdTime = original.createdTime;
-
-                const createResult = await this.eventWriter.createEventLog(payload, modifier);
-
-                this._invalidateEventCacheSafe();
-
-                // 盡量維持既有 shape：success 至少要有
-                if (createResult && typeof createResult === 'object') {
-                    return { ...createResult, moved: true };
-                }
-                return { success: true, moved: true };
-            } catch (moveError) {
-                console.error('[EventLogService] Move on eventType change failed:', moveError);
-                throw moveError;
-            }
-        }
-
-        // 5) 沒有 eventType 變更 -> 正常 update
-        const user = { displayName: modifier };
-        return await this.updateEvent(rowIndex, data, user);
-    }
-
-    /**
-     * [Patch] 實作 Controller 所需的 deleteEventLog 介面
-     * 負責將 eventId 解析為 rowIndex 與 eventType 後刪除
-     */
     async deleteEventLog(eventId, user) {
         try {
-            // 1. 讀取所有事件以查找 eventId (解析 rowIndex 與 eventType)
-            // [Note] Delete 流程必須依賴 Sheet 的 rowIndex，因此直接呼叫 Sheet Reader，不走 SQL fallback 邏輯
-            const logs = await this.eventReader.getEventLogs();
-            const target = logs.find(l => l.eventId === eventId);
-
-            if (!target) {
-                throw new Error(`Delete Failed: Event ID '${eventId}' not found.`);
-            }
-
-            // 2. 呼叫底層 deleteEvent 進行實體刪除 (複用既有邏輯)
-            // 注意：deleteEvent 內部會呼叫 Writer 並 invalidate cache
-            console.log(`[EventLogService] Resolved delete for ${eventId} -> Row ${target.rowIndex} (${target.eventType})`);
-            return await this.deleteEvent(target.rowIndex, target.eventType, { displayName: user });
-
-        } catch (error) {
-            console.error(`[EventLogService] deleteEventLog Error (${eventId}):`, error);
-            throw error;
-        }
-    }
-
-    async deleteEvent(rowIndex, eventType, user) {
-        try {
-            const result = await this.eventWriter.deleteEventLog(rowIndex, eventType);
+            const modifier = user?.displayName || user || 'System';
+            const result = await this.eventLogSqlWriter.deleteEventLog(eventId, modifier);
             this._invalidateEventCacheSafe();
             return result;
         } catch (error) {
-            console.error(`[EventLogService] deleteEvent Error (Row: ${rowIndex}):`, error);
+            console.error(`[EventLogService] deleteEventLog Error (${eventId}):`, error);
             throw error;
         }
     }
