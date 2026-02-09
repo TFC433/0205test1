@@ -1,10 +1,11 @@
 /**
  * services/service-container.js
  * 服務容器 (IoC Container)
- * * @version 8.0.0 (Phase 4: Announcement & Opportunity Full SQL)
- * * @date 2026-02-06
- * * @description
- * - Injected OpportunitySqlWriter into OpportunityService.
+ * @version 8.0.2 (Phase 7: Company/Opportunity Log SQL Fix)
+ * @date 2026-02-09
+ * @description
+ * - CompanyService / OpportunityService 的 side-effect logging 改注入 interactionSqlWriter（避免寫回 Sheets）
+ * - 其餘維持 v8.0.1
  */
 
 const config = require('../config');
@@ -35,11 +36,13 @@ const ProductReader = require('../data/product-reader');
 const ContactWriter = require('../data/contact-writer');
 const ContactSqlWriter = require('../data/contact-sql-writer');
 const CompanyWriter = require('../data/company-writer');
-const CompanySqlWriter = require('../data/company-sql-writer'); 
+const CompanySqlWriter = require('../data/company-sql-writer');
 const OpportunityWriter = require('../data/opportunity-writer');
-const OpportunitySqlWriter = require('../data/opportunity-sql-writer'); // [Added]
+const OpportunitySqlWriter = require('../data/opportunity-sql-writer');
 const InteractionWriter = require('../data/interaction-writer');
+const InteractionSqlWriter = require('../data/interaction-sql-writer');
 const EventLogWriter = require('../data/event-log-writer');
+const EventLogSqlWriter = require('../data/event-log-sql-writer');
 const SystemWriter = require('../data/system-writer');
 const WeeklyBusinessWriter = require('../data/weekly-business-writer');
 const WeeklyBusinessSqlWriter = require('../data/weekly-business-sql-writer');
@@ -80,7 +83,7 @@ let services = null;
 async function initializeServices() {
     if (services) return services;
 
-    console.log('🚀 [System] 正在初始化 Service Container (v8.0.0 Phase 4 SQL)...');
+    console.log('🚀 [System] 正在初始化 Service Container (v8.0.2 Phase 7 Log SQL Fix)...');
 
     try {
         // 1. Infrastructure
@@ -90,9 +93,8 @@ async function initializeServices() {
         const calendar = await googleClientService.getCalendarClient();
 
         // 2. Readers
-        const contactRawReader = new ContactReader(sheets, config.IDS.RAW);   
-        const contactCoreReader = new ContactReader(sheets, config.IDS.CORE); 
-
+        const contactRawReader = new ContactReader(sheets, config.IDS.RAW);
+        const contactCoreReader = new ContactReader(sheets, config.IDS.CORE);
         const contactSqlReader = new ContactSqlReader();
 
         const companyReader = new CompanyReader(sheets, config.IDS.CORE);
@@ -129,10 +131,13 @@ async function initializeServices() {
             opportunityReader,
             contactCoreReader
         );
-        const opportunitySqlWriter = new OpportunitySqlWriter(); // [Added]
+        const opportunitySqlWriter = new OpportunitySqlWriter();
 
         const interactionWriter = new InteractionWriter(sheets, config.IDS.CORE, interactionReader);
+        const interactionSqlWriter = new InteractionSqlWriter();
+
         const eventLogWriter = new EventLogWriter(sheets, config.IDS.CORE, eventLogReader);
+        const eventLogSqlWriter = new EventLogSqlWriter();
 
         const weeklyWriter = new WeeklyBusinessWriter(sheets, config.IDS.CORE, weeklyReader);
         const weeklySqlWriter = new WeeklyBusinessSqlWriter();
@@ -155,8 +160,8 @@ async function initializeServices() {
         const systemService = new SystemService(systemReader, systemWriter);
 
         const contactService = new ContactService(
-            contactRawReader,     
-            contactCoreReader,    
+            contactRawReader,
+            contactCoreReader,
             contactWriter,
             companyReader,
             config,
@@ -164,17 +169,19 @@ async function initializeServices() {
             contactSqlWriter
         );
 
+        // ✅ FIX: CompanyService 的 logging writer 改用 interactionSqlWriter（取代 interactionWriter）
         const companyService = new CompanyService(
             companyReader, companyWriter,
             contactCoreReader, contactWriter,
             opportunityReader, opportunityWriter,
-            interactionReader, interactionWriter,
+            interactionReader, interactionSqlWriter,   // <-- CHANGED (was interactionWriter)
             eventLogReader, systemReader,
             companySqlReader,
             contactService,
             companySqlWriter
         );
 
+        // ✅ FIX: OpportunityService 的 logging writer 改用 interactionSqlWriter（取代 interactionWriter）
         const opportunityService = new OpportunityService({
             config,
             opportunityReader,
@@ -184,17 +191,17 @@ async function initializeServices() {
             companyReader,
             companyWriter,
             interactionReader,
-            interactionWriter,
+            interactionWriter: interactionSqlWriter,   // <-- CHANGED (was interactionWriter)
             eventLogReader,
             systemReader,
             opportunitySqlReader,
-            opportunitySqlWriter, // [Added]
+            opportunitySqlWriter,
             contactService
         });
 
         const interactionService = new InteractionService(
             interactionReader,
-            interactionWriter,
+            interactionSqlWriter,
             opportunityReader,
             companyReader,
             interactionSqlReader
@@ -202,12 +209,12 @@ async function initializeServices() {
 
         const eventLogService = new EventLogService(
             eventLogReader,
-            eventLogWriter,
             opportunityReader,
             companyReader,
             systemReader,
             calendarService,
-            eventLogSqlReader
+            eventLogSqlReader,
+            eventLogSqlWriter
         );
 
         const weeklyBusinessService = new WeeklyBusinessService({
@@ -292,9 +299,9 @@ async function initializeServices() {
             contactRawReader,
             contactCoreReader,
             weeklyBusinessReader: weeklyReader,
-            weeklyBusinessWriter: weeklyWriter, 
+            weeklyBusinessWriter: weeklyWriter,
             systemReader, systemWriter,
-            interactionWriter,
+            interactionWriter,          // 保留：若還有 RAW/Legacy 需要，但不應被 CORE side-effect 用到
             eventLogReader
         };
 
