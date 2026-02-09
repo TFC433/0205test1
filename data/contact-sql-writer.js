@@ -1,10 +1,12 @@
 /**
  * data/contact-sql-writer.js
- * [Phase 7-1/7-2] SQL Writer for Official Contacts
- * * @version 7.0.0
- * * @date 2026-02-04
- * * @description Strict SQL write operations for Official Contacts.
- * * Handles Create, Update, Delete with strict ID contracts.
+ * [Phase 7] SQL Writer for Official Contacts
+ * @version 7.4.0 (Phase 7: Locked Schema Enforcement)
+ * @date 2026-02-09
+ * @description 
+ * - Handles Create/Update/Delete for 'contacts' table.
+ * - STRICT SCHEMA: No invention of columns.
+ * - Locked Schema: contact_id, source_id, name, company_id, department, job_title, mobile, phone, email, created/updated_time/by.
  */
 
 const { supabase } = require('../config/supabase');
@@ -21,22 +23,22 @@ class ContactSqlWriter {
      * @returns {Promise<Object>} { success: true, id: string }
      */
     async createContact(data, user) {
-        // [Contract] Ensure ID exists. Pattern: C + Timestamp
-        // Prioritize provided ID, else generate new.
+        // [Contract] Generate ID if missing. Pattern: C + Timestamp
         const contactId = data.contactId || data.id || `C${Date.now()}`;
         const now = new Date().toISOString();
 
         console.log(`👤 [ContactSqlWriter] Creating contact: ${data.name || 'Unnamed'} (ID: ${contactId})`);
 
+        // STRICT SCHEMA MAPPING
         const payload = {
             contact_id: contactId,
-            source_id: data.sourceId || 'MANUAL',
+            source_id: data.sourceId || 'MANUAL', // Ref to RAW contact if applicable
             name: data.name,
-            company_id: data.companyId || data.company || null, // Handle both key styles
+            company_id: data.companyId || data.company || null,
             department: data.department || '',
-            job_title: data.jobTitle || data.position || '',      // Handle both key styles
+            job_title: data.jobTitle || data.position || '',
             mobile: data.mobile || '',
-            phone: data.phone || data.tel || '',                  // Handle both key styles
+            phone: data.phone || data.tel || '',
             email: data.email || '',
             created_by: user,
             updated_by: user,
@@ -53,7 +55,6 @@ class ContactSqlWriter {
             throw new Error(`[ContactSqlWriter] Create Error: ${error.message}`);
         }
 
-        // [Contract] Must return { success, id } for WorkflowService compatibility
         return { success: true, id: contactId };
     }
 
@@ -67,23 +68,35 @@ class ContactSqlWriter {
         console.log(`👤 [ContactSqlWriter] Updating contact ${contactId} by ${user}`);
 
         const now = new Date().toISOString();
+        
+        // Base payload
         const payload = {
             updated_time: now,
             updated_by: user
         };
 
-        // Map Service fields (CamelCase) to SQL columns (snake_case)
+        // Strict field mapping (CamelCase -> snake_case)
         if (data.name !== undefined) payload.name = data.name;
+        
+        // Company ID
         if (data.companyId !== undefined) payload.company_id = data.companyId;
-        if (data.company !== undefined) payload.company_id = data.company; // Alias
+        else if (data.company !== undefined) payload.company_id = data.company;
+        
         if (data.department !== undefined) payload.department = data.department;
+        
+        // Job Title / Position
         if (data.jobTitle !== undefined) payload.job_title = data.jobTitle;
-        if (data.position !== undefined) payload.job_title = data.position; // Alias
+        else if (data.position !== undefined) payload.job_title = data.position;
+        
         if (data.mobile !== undefined) payload.mobile = data.mobile;
+        
+        // Phone / Tel
         if (data.phone !== undefined) payload.phone = data.phone;
-        if (data.tel !== undefined) payload.phone = data.tel; // Alias
+        else if (data.tel !== undefined) payload.phone = data.tel;
+        
         if (data.email !== undefined) payload.email = data.email;
 
+        // Execute Update
         const { error } = await supabase
             .from(this.tableName)
             .update(payload)

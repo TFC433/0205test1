@@ -1,19 +1,20 @@
 /**
  * services/contact-service.js
  * 聯絡人業務邏輯服務層
- * * @version 7.3.1 (Phase 7: Dashboard Interface Support)
- * @date 2026-02-04
+ * @version 7.4.0 (Phase 7: SQL Write Authority Enforced)
+ * @date 2026-02-09
  * @description
- * - Official Contacts: SQL primary read, Sheet fallback via CORE reader only.
- * - Official Contacts write: SQL only via contactSqlWriter.
- * - Potential Contacts (RAW): stays on Sheet via RAW reader/writer.
+ * [STRICT WRITE AUTHORITY]
+ * - CORE CONTACT ZONE (Official): SQL ONLY for Create/Update/Delete. NO Sheet fallback for writes.
+ * - RAW CONTACT ZONE (Potential): Sheet ONLY via rowIndex.
+ * - READS: Hybrid (SQL Primary -> Sheet Fallback) maintained for backward compatibility.
  */
 
 class ContactService {
     /**
      * @param {ContactReader} contactRawReader  - bound to IDS.RAW (Potential contacts)
      * @param {ContactReader} contactCoreReader - bound to IDS.CORE (Official list + link table)
-     * @param {ContactWriter} contactWriter     - RAW write only
+     * @param {ContactWriter} contactWriter     - RAW write only (Sheet)
      * @param {CompanyReader} companyReader
      * @param {Object} config
      * @param {ContactSqlReader} [contactSqlReader]
@@ -29,6 +30,10 @@ class ContactService {
         this.contactSqlWriter = contactSqlWriter;
     }
 
+    // ============================================================
+    // INTERNAL HELPERS (READ MAPPING)
+    // ============================================================
+
     _normalizeKey(str = '') {
         return String(str).toLowerCase().trim();
     }
@@ -36,7 +41,8 @@ class ContactService {
     _mapSqlContact(contact) {
         return {
             ...contact,
-            position: contact.jobTitle || contact.position
+            position: contact.jobTitle || contact.position, // Normalize to internal convention
+            jobTitle: contact.jobTitle || contact.position
         };
     }
 
@@ -47,6 +53,10 @@ class ContactService {
         };
     }
 
+    // ============================================================
+    // READ OPERATIONS (HYBRID: SQL PRIMARY -> SHEET FALLBACK)
+    // ============================================================
+
     async _fetchOfficialContactsWithCompanies(forceSheet = false) {
         let allContacts = null;
 
@@ -56,23 +66,27 @@ class ContactService {
                 try {
                     const sqlContacts = await this.contactSqlReader.getContacts();
                     if (!sqlContacts || sqlContacts.length === 0) {
-                        throw new Error('SQL returned empty data or null (Treating as sync lag)');
+                        // SQL might be empty intentionally, but if we suspect sync lag, we fallback.
+                        // For now, if SQL returns empty array, we accept it as empty unless we really want fallback.
+                        // Assuming standard behavior: valid empty array is a result. Null/undefined is error.
+                        allContacts = sqlContacts.map(c => this._mapSqlContact(c));
+                    } else {
+                         allContacts = sqlContacts.map(c => this._mapSqlContact(c));
                     }
-                    allContacts = sqlContacts.map(c => this._mapSqlContact(c));
                 } catch (error) {
-                    console.warn('[ContactService] SQL Read Error/Empty (Fallback to Sheet):', error.message);
+                    console.warn('[ContactService] SQL Read Error (Fallback to Sheet):', error.message);
                     allContacts = null;
                 }
-            } else {
-                console.warn('[ContactService] SQL Reader NOT injected. Skipping to Sheet.');
             }
         }
 
         // 2) Sheet fallback (MUST be CORE reader)
         if (!allContacts) {
             if (!this.contactCoreReader) {
-                throw new Error('[ContactService] contactCoreReader not configured for Sheet fallback');
+                console.warn('[ContactService] contactCoreReader not configured, returning empty.');
+                return [];
             }
+            // console.warn('[ContactService] Falling back to Sheet for Official Contacts');
             allContacts = await this.contactCoreReader.getContactList();
         }
 
@@ -84,7 +98,10 @@ class ContactService {
     }
 
     async _resolveContactRowIndex(contactId) {
-        // Deprecated in Phase 7 writes, but if ever used, must read CORE
+        // [Phase 7 Forensics] 
+        // This method implies looking up a row index for a CORE contact.
+        // Since CORE writes are now SQL-only, this should only be used if absolutely necessary for some legacy read operation.
+        // It MUST NOT be used for writes.
         if (!this.contactCoreReader) throw new Error('[ContactService] contactCoreReader not configured');
         const allContacts = await this.contactCoreReader.getContactList();
         const target = allContacts.find(c => c.contactId === contactId);
@@ -97,15 +114,13 @@ class ContactService {
     /**
      * [Phase 7 Dashboard Interface]
      * 提供儀表板所需的完整正式聯絡人清單
-     * 封裝 SQL/Sheet 混合讀取邏輯
-     * @returns {Promise<Array>} 成功回傳聯絡人陣列，失敗回傳空陣列
      */
     async getAllOfficialContacts() {
         try {
             return await this._fetchOfficialContactsWithCompanies();
         } catch (error) {
             console.error('[ContactService] getAllOfficialContacts Failed:', error);
-            return []; // Fail-safe
+            return [];
         }
     }
 
@@ -129,8 +144,10 @@ class ContactService {
         if (!this.contactRawReader) throw new Error('[ContactService] contactRawReader not configured');
         let contacts = await this.contactRawReader.getContacts();
 
+        // Filter valid entries
         contacts = contacts.filter(c => c.name || c.company);
 
+        // Sort by Created Time DESC
         contacts.sort((a, b) => {
             const dateA = new Date(a.createdTime);
             const dateB = new Date(b.createdTime);
@@ -207,8 +224,6 @@ class ContactService {
             } catch (error) {
                 console.warn('[ContactService] SQL Single Read Error (Fallback):', error.message);
             }
-        } else {
-            console.warn('[ContactService] SQL Reader NOT injected. Using Sheet Fallback for getContactById.');
         }
 
         // CORE sheet fallback
@@ -223,9 +238,9 @@ class ContactService {
             if (!this.contactRawReader) throw new Error('[ContactService] contactRawReader not configured');
 
             const [allLinks, officialContacts, allPotentialContacts] = await Promise.all([
-                this.contactCoreReader.getAllOppContactLinks(),   // ✅ CORE
+                this.contactCoreReader.getAllOppContactLinks(),   // CORE Link table
                 this._fetchOfficialContactsWithCompanies(),       // SQL primary
-                this.contactRawReader.getContacts()               // ✅ RAW (images)
+                this.contactRawReader.getContacts()               // RAW (images/drive links)
             ]);
 
             const linkedContactIds = new Set();
@@ -276,15 +291,23 @@ class ContactService {
         }
     }
 
-    // ----------------------------
-    // Phase 7 Writes (SQL Only)
-    // ----------------------------
+    // ============================================================
+    // CORE CONTACT ZONE (PHASE 7: SQL ONLY WRITES)
+    // ============================================================
+    
+    /**
+     * Create Official Contact
+     * STRICT: SQL Writer Only. NO Sheet Writer.
+     */
     async createContact(contactData, user) {
-        if (!this.contactSqlWriter) throw new Error('[ContactService] ContactSqlWriter not configured. Create failed.');
+        if (!this.contactSqlWriter) {
+            throw new Error('[ContactService] CRITICAL: ContactSqlWriter not configured. Create disallowed.');
+        }
 
+        // 1. Write to SQL
         const result = await this.contactSqlWriter.createContact(contactData, user);
 
-        // invalidate official cache (CORE reader)
+        // 2. Invalidate Read Cache (if any)
         if (this.contactCoreReader && this.contactCoreReader.invalidateCache) {
             this.contactCoreReader.invalidateCache('contactList');
         }
@@ -292,11 +315,19 @@ class ContactService {
         return result; // { success: true, id }
     }
 
+    /**
+     * Update Official Contact
+     * STRICT: SQL Writer Only. NO Sheet Writer.
+     */
     async updateContact(contactId, updateData, user) {
-        if (!this.contactSqlWriter) throw new Error('[ContactService] ContactSqlWriter not configured. Update failed.');
+        if (!this.contactSqlWriter) {
+            throw new Error('[ContactService] CRITICAL: ContactSqlWriter not configured. Update disallowed.');
+        }
 
+        // 1. Write to SQL
         await this.contactSqlWriter.updateContact(contactId, updateData, user);
 
+        // 2. Invalidate Read Cache
         if (this.contactCoreReader && this.contactCoreReader.invalidateCache) {
             this.contactCoreReader.invalidateCache('contactList');
         }
@@ -304,11 +335,19 @@ class ContactService {
         return { success: true };
     }
 
+    /**
+     * Delete Official Contact
+     * STRICT: SQL Writer Only. NO Sheet Writer.
+     */
     async deleteContact(contactId, user) {
-        if (!this.contactSqlWriter) throw new Error('[ContactService] ContactSqlWriter not configured. Delete failed.');
+        if (!this.contactSqlWriter) {
+            throw new Error('[ContactService] CRITICAL: ContactSqlWriter not configured. Delete disallowed.');
+        }
 
+        // 1. Delete from SQL
         await this.contactSqlWriter.deleteContact(contactId);
 
+        // 2. Invalidate Read Cache
         if (this.contactCoreReader && this.contactCoreReader.invalidateCache) {
             this.contactCoreReader.invalidateCache('contactList');
         }
@@ -316,27 +355,37 @@ class ContactService {
         return { success: true };
     }
 
-    // ----------------------------
-    // RAW (Potential) stays Sheet
-    // ----------------------------
+    // ============================================================
+    // RAW CONTACT ZONE (POTENTIAL CONTACTS - SHEET ONLY)
+    // ============================================================
+
+    /**
+     * Update Potential Contact (RAW)
+     * USAGE: Sheet Writer (rowIndex based)
+     */
     async updatePotentialContact(rowIndex, updateData, modifier) {
         try {
             if (!this.contactRawReader) throw new Error('[ContactService] contactRawReader not configured');
-
+            
+            // 1. Resolve target via Reader
             const allContacts = await this.contactRawReader.getContacts();
             const target = allContacts.find(c => c.rowIndex === parseInt(rowIndex));
             if (!target) throw new Error(`找不到潛在客戶 Row: ${rowIndex}`);
 
+            // 2. Prepare Merge
             const mergedData = { ...target, ...updateData };
 
+            // 3. Handle Notes Append Logic
             if (updateData.notes) {
                 const oldNotes = target.notes || '';
                 const newNoteEntry = `[${modifier} ${new Date().toLocaleDateString()}] ${updateData.notes}`;
                 mergedData.notes = oldNotes ? `${oldNotes}\n${newNoteEntry}` : newNoteEntry;
             }
 
+            // 4. Write to Sheet (Legacy Writer)
             await this.contactWriter.writePotentialContactRow(rowIndex, mergedData);
 
+            // 5. Invalidate RAW Cache
             if (this.contactRawReader.invalidateCache) {
                 this.contactRawReader.invalidateCache('contacts');
             }
