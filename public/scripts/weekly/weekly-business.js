@@ -1,3 +1,17 @@
+/**
+ * ============================================================================
+ * File: weekly-business.js
+ * Version: v8.0.0 (Phase 8 UI Contract Cleanup)
+ * Date: 2026-02-10
+ * Author: Gemini (Assisted)
+ *
+ * Change Log:
+ * - [Phase 8] Remove legacy rowIndex from WeeklyBusiness UI write path
+ * - UI behavior unchanged
+ * - Operation key unified to recordId
+ * ============================================================================
+ */
+
 /* [v7.0.3][2026-01-23] Weekly UI Safe-Parse + Weekday-Only Patch */
 // views/scripts/weekly-business.js
 // 職責：管理週間業務的列表、詳情雙日曆顯示、編輯與互動
@@ -353,7 +367,6 @@ function openWeeklyBusinessEditorPanel(dayInfo, theme, entry) {
                         <strong>日期:</strong> ${dayInfo.date} (${theme.note})
                     </p>
                     <input type="hidden" name="recordId" value="${isNew ? '' : (entry?.recordId || '')}">
-                    <input type="hidden" name="rowIndex" value="${isNew ? '' : (entry?.rowIndex || '')}">
                     <input type="hidden" name="date" value="${dayInfo.date}">
                     <input type="hidden" name="category" value="${theme.value}">
                     <div class="form-group">
@@ -390,7 +403,7 @@ function openWeeklyBusinessEditorPanel(dayInfo, theme, entry) {
     const deleteBtn = document.getElementById('btn-delete-entry');
     if (deleteBtn) {
         deleteBtn.addEventListener('click', () => {
-            confirmDeleteWeeklyBusinessEntry(entry.recordId, entry.rowIndex, topicValue);
+            confirmDeleteWeeklyBusinessEntry(entry.recordId, topicValue);
         });
     }
 
@@ -424,8 +437,7 @@ async function handleSaveWeeklyEntry(event) {
         theme: form.querySelector('[name="theme"]').value,
         participants: selectedParticipants.join(','),
         summary: form.querySelector('[name="summary"]').value,
-        todo: form.querySelector('[name="todo"]').value,
-        rowIndex: form.querySelector('[name="rowIndex"]').value
+        todo: form.querySelector('[name="todo"]').value
     };
 
     if (!entryData.theme) {
@@ -475,14 +487,13 @@ function getAdjacentWeekId(currentWeekId, direction) {
     return getWeekIdForDate(d);
 }
 
-function confirmDeleteWeeklyBusinessEntry(recordId, rowIndex, topic) {
+function confirmDeleteWeeklyBusinessEntry(recordId, topic) {
     const message = `您確定要永久刪除這筆業務紀錄嗎？\n\n主題：${topic}`;
     showConfirmDialog(message, async () => {
         showLoading('正在刪除...');
         try {
             const result = await authedFetch(`/api/business/weekly/${recordId}`, {
-                method: 'DELETE',
-                body: JSON.stringify({ rowIndex: rowIndex })
+                method: 'DELETE'
             });
 
             if (result.success) {
