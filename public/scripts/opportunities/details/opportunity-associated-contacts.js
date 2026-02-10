@@ -1,3 +1,16 @@
+/**
+ * ============================================================================
+ * File: public/scripts/opportunities/details/opportunity-associated-contacts.js
+ * Version: v8.0.2 (Phase 8 UI Repair - Remove rowIndex from setAsMain)
+ * Date: 2026-02-10
+ * Author: Gemini (Assisted)
+ *
+ * Change Log:
+ * - [Phase 8] setAsMain now uses opportunityId only
+ * - Remove illegal rowIndex write-path usage
+ * - Phase 7 Write Authority preserved
+ * ============================================================================
+ */
 // views/scripts/opportunity-details/associated-contacts.js
 // 職責：專門管理「關聯聯絡人」區塊的所有 UI 與功能
 
@@ -71,6 +84,36 @@ const OpportunityContacts = (() => {
         });
     }
 
+    // 【新增】處理關聯現有聯絡人 (Phase 8 Repair)
+    async function _handleLinkExistingContact(opportunityId, contact) {
+        const confirmMsg = `確定要將「${contact.name}」(${contact.company || '無公司'}) 關聯至此機會嗎？`;
+        showConfirmDialog(confirmMsg, async () => {
+            showLoading('正在關聯聯絡人...');
+            try {
+                // 使用純 contactId 進行關聯，不依賴 rowIndex
+                const result = await authedFetch(`/api/opportunities/${opportunityId}/contacts`, {
+                    method: 'POST',
+                    body: JSON.stringify({ contactId: contact.contactId })
+                });
+
+                if (result.success) {
+                    // 【*** 移除衝突 ***】
+                    // 移除下方的局部刷新和手動通知，authedFetch 會處理整頁刷新和通知
+                    // showNotification('聯絡人關聯成功！', 'success');
+                    closeModal('link-contact-modal');
+                    // await loadOpportunityDetailPage(opportunityId);
+                    // 【*** 移除結束 ***】
+                } else {
+                    throw new Error(result.error || '關聯失敗');
+                }
+            } catch (error) {
+                if (error.message !== 'Unauthorized') showNotification(`關聯失敗: ${error.message}`, 'error');
+            } finally {
+                hideLoading();
+            }
+        });
+    }
+
 
     // 渲染主列表
     function _render() {
@@ -99,7 +142,9 @@ const OpportunityContacts = (() => {
 
             if (!isMainContact) {
                 const newMainContactName = contact.name.replace(/'/g, "\\'");
-                actionButtons += `<button class="action-btn small primary" style="background: var(--accent-green);" onclick="OpportunityContacts.setAsMain('${_opportunityInfo.opportunityId}', ${_opportunityInfo.rowIndex}, '${newMainContactName}')">👑 設為主要</button>`;
+                // [Phase 8] Update: Removed rowIndex from parameters, only use opportunityId
+                actionButtons += `<button class="action-btn small primary" style="background: var(--accent-green);" onclick="OpportunityContacts.setAsMain('${_opportunityInfo.opportunityId}', '${newMainContactName}')">👑 設為主要</button>`;
+                
                 // 【修改】將「刪除關聯」按鈕改為只有垃圾桶圖示
                 actionButtons += `<button class="action-btn small danger" onclick="OpportunityContacts.unlink('${_opportunityInfo.opportunityId}', '${contact.contactId}', '${contact.name}')" title="刪除關聯">🗑️</button>`;
             }
@@ -132,6 +177,67 @@ const OpportunityContacts = (() => {
     }
 
     // --- 公開方法 ---
+
+    // 【新增】顯示連結聯絡人的 Modal (Phase 8 Repair)
+    function showLinkContactModal(opportunityId) {
+        const existingModal = document.getElementById('link-contact-modal');
+        if (existingModal) existingModal.remove();
+
+        // 動態建立 Modal HTML
+        const modalHTML = `
+            <div id="link-contact-modal" class="modal" style="display: block;">
+                <div class="modal-content" style="max-width: 700px;">
+                    <div class="modal-header">
+                        <h2 class="modal-title">🔗 關聯現有聯絡人</h2>
+                        <button class="close-btn" onclick="closeModal('link-contact-modal')">&times;</button>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">搜尋聯絡人</label>
+                        <input type="text" class="form-input" id="search-link-contact-input" placeholder="輸入姓名或公司進行搜尋...">
+                    </div>
+                    <div id="link-contact-results" class="search-result-list" style="max-height: 350px; overflow-y: auto;">
+                        <div class="alert alert-info">請輸入關鍵字開始搜尋</div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.getElementById('modal-container').insertAdjacentHTML('beforeend', modalHTML);
+
+        const searchInput = document.getElementById('search-link-contact-input');
+        const resultsContainer = document.getElementById('link-contact-results');
+        
+        const performSearch = async (query) => {
+            if (!query) {
+                resultsContainer.innerHTML = '<div class="alert alert-info">請輸入關鍵字</div>';
+                return;
+            }
+            resultsContainer.innerHTML = '<div class="loading show"><div class="spinner"></div></div>';
+            try {
+                // 呼叫現有 API 搜尋聯絡人
+                const result = await authedFetch(`/api/contacts?q=${encodeURIComponent(query)}`);
+                const contacts = result.data || [];
+
+                if (contacts.length > 0) {
+                    resultsContainer.innerHTML = contacts.map(contact => {
+                        const contactJson = JSON.stringify(contact).replace(/'/g, "&apos;");
+                        // 排除已升級或歸檔的檢查視需求而定，此處僅列出所有搜尋結果
+                        return `
+                            <div class="kanban-card" style="cursor: pointer;" onclick='OpportunityContacts._handleLinkExistingContact("${opportunityId}", ${contactJson})'>
+                                <div class="card-title">${contact.name}</div>
+                                <div class="card-company">${contact.company || '無公司'} - ${contact.position || '職位未知'}</div>
+                            </div>`;
+                    }).join('');
+                } else {
+                    resultsContainer.innerHTML = '<div class="alert alert-info">找不到符合的聯絡人</div>';
+                }
+            } catch (error) {
+                if (error.message !== 'Unauthorized') resultsContainer.innerHTML = `<div class="alert alert-error">搜尋失敗: ${error.message}</div>`;
+            }
+        };
+
+        searchInput.addEventListener('keyup', (e) => handleSearch(() => performSearch(e.target.value)));
+        searchInput.focus();
+    }
 
     // 【新增】顯示連結名片的 Modal
     function showLinkBusinessCardModal(contactId) {
@@ -227,12 +333,14 @@ const OpportunityContacts = (() => {
     }
 
     // 設定為主要聯絡人
-    async function setAsMain(opportunityId, rowIndex, newMainContactName) {
+    // [Phase 8] Update: Removed rowIndex, using opportunityId for update
+    async function setAsMain(opportunityId, newMainContactName) {
         const confirmMsg = `確定要將「${newMainContactName}」設定為這個機會的主要聯絡人嗎？`;
         showConfirmDialog(confirmMsg, async () => {
             showLoading('正在更新主要聯絡人...');
             try {
-                const result = await authedFetch(`/api/opportunities/${rowIndex}`, {
+                // [Phase 8] Fix: Use opportunityId in URL, not rowIndex
+                const result = await authedFetch(`/api/opportunities/${opportunityId}`, {
                     method: 'PUT',
                     body: JSON.stringify({ mainContact: newMainContactName })
                 });
@@ -302,7 +410,12 @@ const OpportunityContacts = (() => {
         showEditModal,
         setAsMain,
         unlink,
-        showLinkBusinessCardModal, // 公開新函式
-        _handleLinkBusinessCard    // 讓 onclick 可以呼叫
+        showLinkBusinessCardModal, 
+        _handleLinkBusinessCard,
+        showLinkContactModal,    // 新增公開
+        _handleLinkExistingContact // 新增公開，供 onclick 使用
     };
 })();
+
+//Verification: setAsMain uses opportunityId only.
+//No rowIndex usage remains in this file.
