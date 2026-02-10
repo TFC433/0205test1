@@ -1,12 +1,21 @@
+// data/contact-sql-writer.js
 /**
  * data/contact-sql-writer.js
  * [Phase 7] SQL Writer for Official Contacts
- * @version 7.4.0 (Phase 7: Locked Schema Enforcement)
- * @date 2026-02-09
+ * @version 8.0.0 (Phase 8: World Model Annotation)
+ * @date 2026-02-10
  * @description 
  * - Handles Create/Update/Delete for 'contacts' table.
  * - STRICT SCHEMA: No invention of columns.
  * - Locked Schema: contact_id, source_id, name, company_id, department, job_title, mobile, phone, email, created/updated_time/by.
+ * * WORLD MODEL (PERSISTENCE LAYER):
+ * 1. Scope:
+ * - This writer is EXCLUSIVE to the CORE Contact entity (SQL).
+ * - It NEVER writes to Google Sheets.
+ * - It NEVER receives 'rowIndex'.
+ * * 2. Ownership:
+ * - Contacts created here are independent of their RAW source (except for `source_id` audit trail).
+ * - Contacts created here do NOT know about Opportunities (No opportunity_id column).
  */
 
 const { supabase } = require('../config/supabase');

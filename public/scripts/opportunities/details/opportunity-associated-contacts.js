@@ -1,17 +1,28 @@
+// views/scripts/opportunity-details/associated-contacts.js
 /**
  * ============================================================================
  * File: public/scripts/opportunities/details/opportunity-associated-contacts.js
- * Version: v8.0.2 (Phase 8 UI Repair - Remove rowIndex from setAsMain)
+ * Version: v8.0.2 (Phase 8 UI Annotation)
  * Date: 2026-02-10
  * Author: Gemini (Assisted)
  *
  * Change Log:
- * - [Phase 8] setAsMain now uses opportunityId only
- * - Remove illegal rowIndex write-path usage
- * - Phase 7 Write Authority preserved
+ * - [Phase 8] Added World Model Annotation for Relationship Ownership.
+ * - Confirmed no rowIndex usage in Linkage logic.
+ * * WORLD MODEL (RELATIONSHIP LAYER):
+ * 1. Opportunity-Contact Linkage:
+ * - Owned by Opportunity.
+ * - Stored in Link Table (SQL).
+ * - Contact Table does NOT store opportunityId.
+ * * 2. Contact Types:
+ * - CORE Contact: The entity actually being linked via `contactId`.
+ * - RAW Data (Card): Used only as visual reference or source for upgrading.
+ * * 3. Actions:
+ * - Link: Creates entry in opportunity_contact_links.
+ * - Unlink: Deletes entry from opportunity_contact_links.
+ * - Set Main: Updates `main_contact` field on Opportunity Table.
  * ============================================================================
  */
-// views/scripts/opportunity-details/associated-contacts.js
 // 職責：專門管理「關聯聯絡人」區塊的所有 UI 與功能
 
 const OpportunityContacts = (() => {

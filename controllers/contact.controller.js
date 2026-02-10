@@ -1,10 +1,33 @@
 /**
  * controllers/contact.controller.js
  * 聯絡人模組控制器
- * * @version 6.1.1
- * * @date 2026-01-15
+ * * @version 8.0.0 (Phase 8 Controller Annotation)
+ * * @date 2026-02-10
  * * @description 負責處理聯絡人相關的 HTTP 請求，驗證參數，並呼叫對應的 Service。
  * * 修復了 API 回傳格式以符合前端 contacts.js 的預期 ({ data: [] })。
+ *
+ * ============================================================================
+ * WORLD MODEL (CONTROLLER LAYER):
+ *
+ * 1. RAW ZONE (Potential Contacts)
+ * - Source: Google Sheets (via ContactService -> ContactReader).
+ * - Identity: rowIndex (Volatile, Sheet-based).
+ * - Routes: GET / (searchContacts), GET /dashboard, POST /:rowIndex/file.
+ * - Purpose: OCR intake, high-volume, unverified data.
+ * - Writes: Limited to Status flags (Archive/File) in Sheet.
+ *
+ * 2. CORE ZONE (Official Contacts)
+ * - Source: SQL (Primary) via ContactService -> ContactSqlReader/Writer.
+ * - Identity: contactId (Stable, UUID/C-prefixed).
+ * - Routes: GET /list (searchContactList), PUT /:contactId.
+ * - Purpose: Clean, curated CRM entities linked to Companies/Opportunities.
+ * - Writes: SQL ONLY (Strict Authority).
+ *
+ * 3. THE HANDOFF (Upgrade Flow)
+ * - Route: POST /:rowIndex/upgrade.
+ * - Action: Delegates to WorkflowService to promote RAW -> CORE.
+ * - Note: This controller acts only as a router; it does NOT perform promotion logic.
+ * ============================================================================
  */
 
 const { handleApiError } = require('../middleware/error.middleware');
@@ -22,8 +45,13 @@ class ContactController {
     }
 
     /**
+     * [ZONE: RAW / POTENTIAL]
      * GET /api/contacts
      * 取得潛在客戶列表 (Raw Data)
+     * Identity: N/A (List View)
+     * Target: Google Sheets (Raw Data)
+     * Contract: Returns unverified, high-volume potential contacts.
+     * NOT: Official CRM contacts (CORE).
      * 用於: dashboard.html#contacts 列表顯示
      */
     searchContacts = async (req, res) => {
@@ -42,8 +70,10 @@ class ContactController {
     };
 
     /**
+     * [ZONE: RAW / POTENTIAL]
      * GET /api/contacts/dashboard
      * 取得潛在客戶統計數據
+     * Target: Google Sheets (Aggregation)
      * 用於: dashboard.html#contacts 上方的統計數據
      */
     getDashboardStats = async (req, res) => {
@@ -56,8 +86,13 @@ class ContactController {
     };
 
     /**
+     * [ZONE: CORE / OFFICIAL]
      * GET /api/contacts/list
      * 搜尋正式聯絡人 (Official List)
+     * Identity: N/A (List View)
+     * Target: SQL (Primary) -> Sheet (Fallback)
+     * Contract: Returns curated, official contact entities.
+     * NOT: Raw OCR data or Potential pool.
      * 用於: 聯絡人管理頁面 (含分頁)
      */
     searchContactList = async (req, res) => {
@@ -73,8 +108,12 @@ class ContactController {
     };
 
     /**
+     * [ZONE: BOUNDARY / HANDOFF]
      * POST /api/contacts/:rowIndex/upgrade
      * 將潛在客戶升級為機會案件 (Opportunity)
+     * Identity: rowIndex (Source Identity)
+     * Action: Trigger Workflow (Non-CRUD)
+     * Contract: Initiates the transformation of a RAW contact into a CORE contact + Opportunity.
      * 依賴: WorkflowService
      */
     upgradeContact = async (req, res) => {
@@ -102,8 +141,13 @@ class ContactController {
     };
 
     /**
+     * [ZONE: CORE / OFFICIAL]
      * PUT /api/contacts/:contactId
      * 更新正式聯絡人資料
+     * Identity: contactId
+     * Target: SQL (Strict Write Authority)
+     * Contract: Updates a curated contact entity.
+     * NOT: Updating the Google Sheet (RAW).
      */
     updateContact = async (req, res) => {
         try {
@@ -122,8 +166,11 @@ class ContactController {
     };
 
     /**
+     * [ZONE: HYBRID / WORKFLOW]
      * POST /api/contacts/:contactId/link-card
      * 將潛在客戶的名片圖檔連結到正式聯絡人
+     * Identity: contactId (Target), businessCardRowIndex (Source)
+     * Action: Merges RAW data (Card Image) into CORE entity.
      */
     linkCardToContact = async (req, res) => {
         try {
@@ -147,8 +194,13 @@ class ContactController {
     };
 
     /**
+     * [ZONE: RAW / POTENTIAL]
      * POST /api/contacts/:rowIndex/file
      * 將潛在客戶歸檔 (隱藏/標記為 Dropped)
+     * Identity: rowIndex
+     * Target: Google Sheets (Status Flag Update)
+     * Contract: Marks a RAW contact as 'Dropped' or 'Filed' to hide it from the pool.
+     * NOT: Deleting data (Soft Archive).
      */
     fileContact = async (req, res) => {
         try {

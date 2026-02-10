@@ -1,4 +1,47 @@
 // views/scripts/components/potential-contacts-manager.js
+/**
+ * ============================================================================
+ * File: public/scripts/contacts/contact-potential-manager.js
+ * Version: v8.0.0 (Phase 8 UI Annotation)
+ * Date: 2026-02-10
+ * Author: Gemini (Assisted)
+ *
+ * Change Log:
+ * - [Phase 8] Added World Model & Semantic Identity annotations.
+ * - Comments only, no behavior change.
+ *
+ * WORLD MODEL (UI LAYER):
+ * 1. Bridge / Status Manager:
+ * - Connects RAW Contacts (Sheet/Potential Pool) with CORE Contacts (SQL/Official).
+ * 2. Data Ownership:
+ * - Does NOT own RAW data (Source: contacts.js / Sheet).
+ * - Does NOT own CORE data (Source: contact-service.js / SQL).
+ * 3. Responsibility:
+ * - Visual Reconciliation: Compares RAW vs CORE to determine status (e.g., "已建檔", "已關聯").
+ * - Action Trigger: Initiates file/link actions, but logic resides in API/Service.
+ * ============================================================================
+ */
+
+/**
+ * SEMANTIC IDENTITY (IMPORTANT):
+ *
+ * This module is SEMANTICALLY:
+ * 👉 STATUS RECONCILIATION & ACTION BRIDGE
+ *
+ * Purpose:
+ * - To visually distinguish which RAW contacts have already been promoted to CORE.
+ * - To provide context-aware actions (File vs Link) based on that status.
+ *
+ * Non-Responsibilities:
+ * - NOT a CRUD Manager for CORE contacts.
+ * - NOT a CRUD Manager for RAW contacts.
+ * - Does NOT perform the actual database writes (delegates to API).
+ *
+ * Rationale:
+ * - Essential for the "Potential Pool" view to know what has already been processed.
+ * - Maintains UI continuity during the transition from Sheet-based to SQL-based CRM.
+ */
+
 // 職責：共用的潛在聯絡人管理模組，處理顯示、建檔與關聯邏輯
 
 const PotentialContactsManager = (() => {
@@ -7,8 +50,8 @@ const PotentialContactsManager = (() => {
      * 渲染潛在聯絡人列表的核心函式
      * @param {object} options - 設定物件
      * @param {string} options.containerSelector - 渲染目標容器的 CSS 選擇器
-     * @param {Array<object>} options.potentialContacts - 潛在聯絡人資料陣列
-     * @param {Array<object>} options.comparisonList - 用於比對狀態的聯絡人陣列 (已建檔或已關聯)
+     * @param {Array<object>} options.potentialContacts - 潛在聯絡人資料陣列 (RAW Data Source)
+     * @param {Array<object>} options.comparisonList - 用於比對狀態的聯絡人陣列 (CORE Data Source: 已建檔或已關聯)
      * @param {string} options.comparisonKey - 用於比對的鍵名 (例如 'name')
      * @param {string} options.context - 當前情境 ('company' 或 'opportunity')
      * @param {string} [options.opportunityId] - (可選) 在 'opportunity' 情境下需要提供
@@ -34,6 +77,8 @@ const PotentialContactsManager = (() => {
             return;
         }
 
+        // [WORLD MODEL] Comparison Logic: Preparing the CORE list for efficient lookup
+        // Comparison only; no write authority here.
         const comparisonSet = new Set(comparisonList.map(item => item[comparisonKey]));
 
         let tableHTML = `
@@ -52,20 +97,26 @@ const PotentialContactsManager = (() => {
         
         potentialContacts.forEach(contact => {
             const contactJsonString = JSON.stringify(contact).replace(/'/g, "&apos;");
+            
+            // [STATUS INFERENCE] Determines if RAW contact exists in CORE based on comparisonKey.
             const isAlreadyHandled = comparisonSet.has(contact[comparisonKey]);
             
             let statusBadge = '';
             let actionButton = '';
 
             if (isAlreadyHandled) {
+                // [VISUAL STATUS] Render "Already Processed" state (No actions allowed)
                 const statusText = context === 'company' ? '已建檔' : '已關聯';
                 statusBadge = `<span class="contact-card-status upgraded">${statusText}</span>`;
                 actionButton = ''; // 已處理，不顯示按鈕
             } else {
+                // [VISUAL STATUS] Render "Pending" state (Actions allowed)
                 statusBadge = `<span class="contact-card-status pending">待處理</span>`;
                 if (context === 'company') {
+                    // [ACTION TRIGGER] File: Promote RAW to CORE (New Contact)
                     actionButton = `<button class="action-btn small primary" onclick='PotentialContactsManager.handleFileContact(${contactJsonString})'>📋 建檔</button>`;
                 } else if (context === 'opportunity') {
+                    // [ACTION TRIGGER] Link: Associate RAW to Opportunity (Link + Potential Promotion)
                     actionButton = `<button class="action-btn small primary" onclick='PotentialContactsManager.handleLinkContact(${contactJsonString}, "${opportunityId}")'>🔗 關聯</button>`;
                 }
             }
@@ -99,13 +150,15 @@ const PotentialContactsManager = (() => {
 
     /**
      * 處理「建檔」按鈕點擊事件
-     * @param {object} contactData - 潛在聯絡人的資料
+     * [ACTION TRIGGER] Initiates "Raw -> Core" promotion via API.
+     * @param {object} contactData - 潛在聯絡人的資料 (RAW)
      */
     async function handleFileContact(contactData) {
         const confirmMsg = `您確定要將潛在聯絡人「${contactData.name}」建立正式檔案嗎？`;
         showConfirmDialog(confirmMsg, async () => {
             showLoading('正在建立聯絡人檔案...');
             try {
+                // [API HANDOFF] POST to backend to perform the actual SQL write.
                 const result = await authedFetch(`/api/contacts/${contactData.rowIndex}/file`, {
                     method: 'POST'
                 });
@@ -130,7 +183,8 @@ const PotentialContactsManager = (() => {
 
     /**
      * 處理「關聯」按鈕點擊事件
-     * @param {object} contactData - 潛在聯絡人的資料
+     * [ACTION TRIGGER] Initiates "Raw -> Opportunity" linkage via API.
+     * @param {object} contactData - 潛在聯絡人的資料 (RAW)
      * @param {string} opportunityId - 要關聯到的機會 ID
      */
     async function handleLinkContact(contactData, opportunityId) {
@@ -142,11 +196,12 @@ const PotentialContactsManager = (() => {
             mobile: contactData.mobile,
             phone: contactData.phone,
             email: contactData.email,
-            rowIndex: contactData.rowIndex, 
+            rowIndex: contactData.rowIndex, // RAW identity passed for processing
             company: contactData.company,
         };
 
         try {
+            // [API HANDOFF] POST to backend. Backend handles Logic (Upgrade? Link?).
             const result = await authedFetch(`/api/opportunities/${opportunityId}/contacts`, {
                 method: 'POST',
                 body: JSON.stringify(payload)

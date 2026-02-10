@@ -1,13 +1,23 @@
+// services/contact-service.js
 /**
  * services/contact-service.js
  * 聯絡人業務邏輯服務層
- * @version 7.4.0 (Phase 7: SQL Write Authority Enforced)
- * @date 2026-02-09
+ * @version 8.0.0 (Phase 8: World Model Annotation)
+ * @date 2026-02-10
  * @description
  * [STRICT WRITE AUTHORITY]
  * - CORE CONTACT ZONE (Official): SQL ONLY for Create/Update/Delete. NO Sheet fallback for writes.
  * - RAW CONTACT ZONE (Potential): Sheet ONLY via rowIndex.
  * - READS: Hybrid (SQL Primary -> Sheet Fallback) maintained for backward compatibility.
+ * * WORLD MODEL (DATA LAYER):
+ * 1. RAW Contact:
+ * - Lives in Google Sheets (accessed via contactRawReader).
+ * - Read-Only for CRM logic (Upgrade process copies data, doesn't move it).
+ * - Update allowed ONLY for status flags (via updatePotentialContact / Sheet Writer).
+ * * 2. CORE Contact:
+ * - Lives in SQL (accessed via contactSqlReader/Writer).
+ * - The ONLY place where Opportunity linkage occurs.
+ * - Created via createContact (SQL Writer).
  */
 
 class ContactService {
@@ -57,6 +67,14 @@ class ContactService {
     // READ OPERATIONS (HYBRID: SQL PRIMARY -> SHEET FALLBACK)
     // ============================================================
 
+    /**
+     * [ZONE: CORE / OFFICIAL]
+     * Internal Fetcher with V8-A Allowed Fallback
+     * Strategy:
+     * 1. Try SQL (Authoritative Source)
+     * 2. If SQL fails or returns empty (and we suspect sync lag), fallback to Sheet (Legacy Read).
+     * Note: This fallback is strictly for READ availability, never for Writes.
+     */
     async _fetchOfficialContactsWithCompanies(forceSheet = false) {
         let allContacts = null;
 
@@ -112,6 +130,7 @@ class ContactService {
     }
 
     /**
+     * [ZONE: CORE / OFFICIAL]
      * [Phase 7 Dashboard Interface]
      * 提供儀表板所需的完整正式聯絡人清單
      */
@@ -124,6 +143,10 @@ class ContactService {
         }
     }
 
+    /**
+     * [ZONE: RAW / POTENTIAL]
+     * Reads aggregation stats from RAW contact pool (Google Sheets).
+     */
     async getDashboardStats() {
         try {
             if (!this.contactRawReader) throw new Error('[ContactService] contactRawReader not configured');
@@ -140,6 +163,11 @@ class ContactService {
         }
     }
 
+    /**
+     * [ZONE: RAW / POTENTIAL]
+     * Fetches RAW contacts from Google Sheets.
+     * Used for OCR intake, verification, and upgrade selection.
+     */
     async getPotentialContacts(limit = 2000) {
         if (!this.contactRawReader) throw new Error('[ContactService] contactRawReader not configured');
         let contacts = await this.contactRawReader.getContacts();
@@ -160,6 +188,10 @@ class ContactService {
         return contacts;
     }
 
+    /**
+     * [ZONE: RAW / POTENTIAL]
+     * Search functionality for the Potential Pool.
+     */
     async searchContacts(query) {
         try {
             let contacts = await this.getPotentialContacts(9999);
@@ -177,6 +209,11 @@ class ContactService {
         }
     }
 
+    /**
+     * [ZONE: CORE / OFFICIAL]
+     * Search functionality for Official Contacts.
+     * Uses Hybrid Read Strategy.
+     */
     async searchOfficialContacts(query, page = 1) {
         try {
             let contacts = await this._fetchOfficialContactsWithCompanies();
@@ -209,6 +246,11 @@ class ContactService {
         }
     }
 
+    /**
+     * [ZONE: CORE / OFFICIAL]
+     * Fetches a single Official Contact by ID.
+     * Priority: SQL -> Fallback: Sheet.
+     */
     async getContactById(contactId) {
         // SQL primary
         if (this.contactSqlReader) {
@@ -232,6 +274,14 @@ class ContactService {
         return contact || null;
     }
 
+    /**
+     * [ZONE: HYBRID / READ]
+     * Retrieves contacts linked to an opportunity.
+     * JOINS:
+     * 1. CORE Link Table (opportunity_contact_links)
+     * 2. CORE Contact List (Official)
+     * 3. RAW Contact List (to fetch Drive Links/Card Images if available)
+     */
     async getLinkedContacts(opportunityId) {
         try {
             if (!this.contactCoreReader) throw new Error('[ContactService] contactCoreReader not configured');
@@ -296,6 +346,7 @@ class ContactService {
     // ============================================================
     
     /**
+     * [ZONE: CORE / OFFICIAL]
      * Create Official Contact
      * STRICT: SQL Writer Only. NO Sheet Writer.
      */
@@ -316,6 +367,7 @@ class ContactService {
     }
 
     /**
+     * [ZONE: CORE / OFFICIAL]
      * Update Official Contact
      * STRICT: SQL Writer Only. NO Sheet Writer.
      */
@@ -336,6 +388,7 @@ class ContactService {
     }
 
     /**
+     * [ZONE: CORE / OFFICIAL]
      * Delete Official Contact
      * STRICT: SQL Writer Only. NO Sheet Writer.
      */
@@ -360,8 +413,10 @@ class ContactService {
     // ============================================================
 
     /**
+     * [ZONE: RAW / POTENTIAL]
      * Update Potential Contact (RAW)
      * USAGE: Sheet Writer (rowIndex based)
+     * Used for updating status flags (e.g., 'Processed', 'Dropped').
      */
     async updatePotentialContact(rowIndex, updateData, modifier) {
         try {

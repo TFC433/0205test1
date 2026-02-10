@@ -1,4 +1,55 @@
 // views/scripts/contacts.js
+/**
+ * ============================================================================
+ * File: public/scripts/contacts/contacts.js
+ * Version: v8.0.1 (Phase 8 UI Annotation)
+ * Date: 2026-02-10
+ * Author: Gemini (Assisted)
+ *
+ * Change Log:
+ * - [Phase 8] Added World Model Annotation for RAW vs CORE separation.
+ * - [Phase 8] Semantic identity clarification (comments only)
+ * - Comments only, no behavior change.
+ * * WORLD MODEL (UI LAYER):
+ * 1. RAW Contact (Potential):
+ * - Rendered here (loadContacts).
+ * - Source: /api/contacts (Sheet Read).
+ * - Action: Upgrade (triggers handoff to NewOppWizard).
+ * - Identity: Uses rowIndex (passed in payload) for handoff.
+ * * 2. CORE Contact (Official):
+ * - NOT rendered here. Managed in separate Official List views.
+ * - This file strictly handles the "Potential Pool" (Sheet Data).
+ * ============================================================================
+ */
+
+/**
+ * SEMANTIC IDENTITY (IMPORTANT):
+ *
+ * Although this file is named `contacts.js`, it does NOT represent
+ * the CORE "Contact" domain.
+ *
+ * This module is SEMANTICALLY:
+ * 👉 RAW / POTENTIAL CONTACT POOL UI
+ *
+ * Responsibilities:
+ * - Render RAW contacts sourced from Google Sheets (OCR / business cards).
+ * - Provide triage actions (view card, upgrade).
+ * - Act as the handoff entry point into Opportunity / CORE workflows.
+ *
+ * Non-Responsibilities (by design):
+ * - Does NOT render CORE (Official) Contacts.
+ * - Does NOT manage SQL-backed Contact entities.
+ * - Does NOT own Contact-Opportunity relationships.
+ *
+ * Rationale:
+ * - RAW contacts are high-volume, unverified, and disposable.
+ * - CORE contacts are curated entities and live in SQL with different UI.
+ *
+ * Naming Constraint:
+ * - File name is kept as `contacts.js` for legacy routing stability.
+ * - Semantic meaning is intentionally documented here to avoid misuse.
+ */
+
 // 職責：管理「潛在客戶列表」的渲染與操作 (Event Delegation Refactor)
 
 // ==================== 全域變數 ====================
@@ -39,6 +90,7 @@ async function loadContacts(query = '') {
     try {
         if (allContactsData.length === 0) {
             console.log('[Contacts] 首次載入，正在獲取所有潛在客戶資料...');
+            // [World Model] Fetching RAW Data from Sheet via API
             const [dashboardResult, listResult] = await Promise.all([
                 authedFetch(`/api/contacts/dashboard`),
                 authedFetch(`/api/contacts?q=`)
@@ -90,7 +142,10 @@ function handleContactListClick(e) {
             break;
             
         case 'upgrade':
-            // 呼叫外部全域物件
+            // [World Model] Upgrade Trigger
+            // This initiates the "RAW -> CORE" handoff.
+            // Payload contains RAW data (including rowIndex) to seed the new Opportunity/Contact.
+            // No direct SQL write happens here; it's delegated to the Wizard/Workflow.
             if (window.NewOppWizard && typeof window.NewOppWizard.startWithContact === 'function') {
                 try {
                     const contact = JSON.parse(payload.contact);
