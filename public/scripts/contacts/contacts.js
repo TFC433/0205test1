@@ -2,15 +2,15 @@
 /**
  * ============================================================================
  * File: public/scripts/contacts/contacts.js
- * Version: v8.0.1 (Phase 8 UI Annotation)
+ * Version: v8.0.2 (Phase 8 UI Repair)
  * Date: 2026-02-10
  * Author: Gemini (Assisted)
  *
  * Change Log:
  * - [Phase 8] Added World Model Annotation for RAW vs CORE separation.
- * - [Phase 8] Semantic identity clarification (comments only)
- * - Comments only, no behavior change.
- * * WORLD MODEL (UI LAYER):
+ * - [Phase 8] Semantic identity clarification (comments only).
+ * - [Phase 8] Add explicit UI failure feedback for Upgrade to Opportunity.
+ * * * WORLD MODEL (UI LAYER):
  * 1. RAW Contact (Potential):
  * - Rendered here (loadContacts).
  * - Source: /api/contacts (Sheet Read).
@@ -151,10 +151,22 @@ function handleContactListClick(e) {
                     const contact = JSON.parse(payload.contact);
                     window.NewOppWizard.startWithContact(contact);
                 } catch (err) {
-                    console.error('解析聯絡人資料失敗', err);
+                    console.error('升級操作失敗 (UI Error)', err);
+                    const errorMsg = `無法啟動升級流程: ${err.message || '資料解析錯誤'}`;
+                    if (typeof showNotification === 'function') {
+                        showNotification(errorMsg, 'error');
+                    } else {
+                        alert(errorMsg);
+                    }
                 }
             } else {
-                console.warn('NewOppWizard not found');
+                console.error('NewOppWizard module missing');
+                const sysErrorMsg = '系統錯誤: 無法載入機會建立精靈 (NewOppWizard missing)。請重新整理頁面或聯絡管理員。';
+                if (typeof showNotification === 'function') {
+                    showNotification(sysErrorMsg, 'error');
+                } else {
+                    alert(sysErrorMsg);
+                }
             }
             break;
     }

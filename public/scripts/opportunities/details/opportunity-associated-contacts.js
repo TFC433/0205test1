@@ -2,13 +2,15 @@
 /**
  * ============================================================================
  * File: public/scripts/opportunities/details/opportunity-associated-contacts.js
- * Version: v8.0.2 (Phase 8 UI Annotation)
+ * Version: v8.0.3 (Phase 8 UI Annotation)
  * Date: 2026-02-10
  * Author: Gemini (Assisted)
  *
  * Change Log:
+ * - [Phase 8] Comment-only semantic clarification.
  * - [Phase 8] Added World Model Annotation for Relationship Ownership.
  * - Confirmed no rowIndex usage in Linkage logic.
+ *
  * * WORLD MODEL (RELATIONSHIP LAYER):
  * 1. Opportunity-Contact Linkage:
  * - Owned by Opportunity.
@@ -21,6 +23,11 @@
  * - Link: Creates entry in opportunity_contact_links.
  * - Unlink: Deletes entry from opportunity_contact_links.
  * - Set Main: Updates `main_contact` field on Opportunity Table.
+ *
+ * * WARNING (API USAGE):
+ * - This module uses `/api/contacts` which returns RAW / Potential contacts.
+ * - Be careful not to treat RAW results as CORE contacts for linking.
+ * - Linking requires a valid `contactId`, which RAW contacts may lack.
  * ============================================================================
  */
 // 職責：專門管理「關聯聯絡人」區塊的所有 UI 與功能
@@ -225,6 +232,11 @@ const OpportunityContacts = (() => {
             resultsContainer.innerHTML = '<div class="loading show"><div class="spinner"></div></div>';
             try {
                 // 呼叫現有 API 搜尋聯絡人
+                // [WARNING: RAW / POTENTIAL API]
+                // This call hits `/api/contacts` which returns RAW / Potential contacts (Sheet-based).
+                // RAW contacts usually lack a stable `contactId`.
+                // If you intend to link CORE contacts, use `/api/contacts/list`.
+                // Results from here MUST NOT be treated as CORE unless validated.
                 const result = await authedFetch(`/api/contacts?q=${encodeURIComponent(query)}`);
                 const contacts = result.data || [];
 
@@ -280,6 +292,10 @@ const OpportunityContacts = (() => {
         const performSearch = async (query) => {
             resultsContainer.innerHTML = '<div class="loading show"><div class="spinner"></div></div>';
             try {
+                // [INFO: RAW / POTENTIAL API]
+                // This search targets the RAW / Potential pool.
+                // This is INTENTIONAL here, as we are looking for a RAW Card (image source)
+                // to link to an existing CORE Contact.
                 const result = await authedFetch(`/api/contacts?q=${encodeURIComponent(query)}`);
                 const pendingCards = (result.data || []).filter(c => c.status !== '已升級' && c.status !== '已歸檔');
 
