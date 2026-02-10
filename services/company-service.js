@@ -1,13 +1,14 @@
 /**
  * services/company-service.js
  * 公司業務邏輯層
- * * @version 7.8.0 (Phase 7: SQL Write Authority)
- * @date 2026-02-05
+ * * @version 7.9.0 (Phase 8: ID-based Operations & SQL Write Authority)
+ * @date 2026-02-10
  * * @description
- * * 1. [Phase 7] Write Authority Migration: SQL is now the Primary Write Source.
- * * 2. [Refactor] ID Generation moved to Service (COM format).
- * * 3. [Refactor] Update/Delete uses companyId instead of rowIndex.
- * * 4. [Strict] Removed _findCompanyRowIndex dependency for Writes.
+ * * 1. [Phase 8] Contract Enforcement: companyId is the ONLY valid operation key for Update/Delete/Details.
+ * * 2. [Phase 8] Refactor: updateCompany, deleteCompany, getCompanyDetails now accept companyId.
+ * * 3. [Phase 8] Lookup: Added _getCompanyById helper; removed name-based lookups for mutation operations.
+ * * 4. [Phase 7] Write Authority: SQL is the exclusive write source (CompanySqlWriter).
+ * * 5. [Phase 7] Legacy Removal: No Sheet write logic, no rowIndex usage for operations.
  */
 
 class CompanyService {
@@ -15,10 +16,10 @@ class CompanyService {
         companyReader, companyWriter, contactReader, contactWriter,
         opportunityReader, opportunityWriter, interactionReader, interactionWriter,
         eventLogReader, systemReader, companySqlReader, contactService,
-        companySqlWriter // Inject SQL Writer
+        companySqlWriter // Inject SQL Writer (Phase 7 Requirement)
     ) {
         this.companyReader = companyReader;
-        this.companyWriter = companyWriter; // Keep for legacy reference if needed, but unused for writes
+        this.companyWriter = companyWriter; // Keep for legacy read references if needed
         this.contactReader = contactReader;
         this.contactWriter = contactWriter;
         this.opportunityReader = opportunityReader;
@@ -29,7 +30,7 @@ class CompanyService {
         this.systemReader = systemReader;
         this.companySqlReader = companySqlReader;
         this.contactService = contactService;
-        this.companySqlWriter = companySqlWriter; // Assign
+        this.companySqlWriter = companySqlWriter; // Assigned for Phase 7 Writes
     }
 
     // --- DTO Mapping (SQL-ready) ---
@@ -64,7 +65,7 @@ class CompanyService {
             creator: raw.creator || raw.createdBy || raw.created_by || '',
             lastModifier: raw.lastModifier || raw.updatedBy || raw.updated_by || '',
 
-            // System (Sheet Write legacy, SQL will be undefined)
+            // System (Legacy Sheet artifact, not used for operations)
             rowIndex: raw.rowIndex
         };
     }
@@ -78,12 +79,11 @@ class CompanyService {
     async _getAllCompanies() {
         let companies = null;
 
-        // 1. Try SQL
+        // 1. Try SQL (Phase 7 Primary Read)
         if (this.companySqlReader) {
             try {
                 const sqlRaw = await this.companySqlReader.getCompanies();
                 if (sqlRaw && Array.isArray(sqlRaw) && sqlRaw.length > 0) {
-                    // console.log('[CompanyService] Read Source: SQL');
                     companies = sqlRaw.map(item => this._toServiceDTO(item));
                 }
             } catch (error) {
@@ -91,9 +91,9 @@ class CompanyService {
             }
         }
 
-        // 2. Fallback to Sheet
+        // 2. Fallback to Sheet (Legacy Support)
         if (!companies) {
-            console.log('[CompanyService] Read Source: Sheet (Fallback)');
+            // console.log('[CompanyService] Read Source: Sheet (Fallback)');
             try {
                 const sheetRaw = await this.companyReader.getCompanyList();
                 companies = sheetRaw.map(item => this._toServiceDTO(item));
@@ -107,7 +107,20 @@ class CompanyService {
     }
 
     /**
+     * [Phase 8 Helper] 依 ID 取得單一公司 (已轉 DTO)
+     * 這是 Phase 8 所有 mutation 操作的唯一合法查找方式
+     * @param {string} companyId 
+     * @returns {Promise<Object|null>}
+     */
+    async _getCompanyById(companyId) {
+        if (!companyId) return null;
+        const companies = await this._getAllCompanies();
+        return companies.find(c => c.companyId === companyId) || null;
+    }
+
+    /**
      * 依名稱取得單一公司 (已轉 DTO)
+     * 僅用於建立公司時檢查重複 (Business Rule: Unique Name)
      */
     async _getCompanyByName(companyName) {
         if (!companyName) return null;
@@ -133,8 +146,6 @@ class CompanyService {
     async _logCompanyInteraction(companyId, title, summary, modifier) {
         try {
             if (this.interactionWriter && this.interactionWriter.createInteraction) {
-                // Interaction write logic might still be on Sheet or migrating separately
-                // Ensure interactionWriter is capable
                 await this.interactionWriter.createInteraction({
                     companyId: companyId,
                     eventType: '系統事件',
@@ -156,13 +167,14 @@ class CompanyService {
         try {
             const modifier = user.displayName || user.username || user || 'System';
             
-            // 檢查重複
+            // 檢查重複 (Business Rule: Name Uniqueness)
             const existing = await this._getCompanyByName(companyName);
             if (existing) {
                 return { 
                     success: true, 
                     id: existing.companyId, 
-                    name: existing.companyName, 
+                    companyId: existing.companyId, // Explicit return for Phase 8
+                    companyName: existing.companyName, 
                     message: '公司已存在', 
                     existed: true,
                     data: existing
@@ -170,37 +182,40 @@ class CompanyService {
             }
 
             // [Phase 7] Explicit ID Generation in Service
-            // Format: COMP_timestamp_random (Legacy Compatible)
+            // Format: COMP_timestamp_random
             const companyId = `COMP_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
-            // 準備資料 (Include generated ID)
+            // 準備資料
             const dataToWrite = { 
                 companyId: companyId,
                 companyName: companyName, 
                 ...companyData 
             };
             
-            // 執行寫入 (SQL)
-            // Note: companySqlWriter must be injected
+            // 執行寫入 (SQL ONLY - Phase 7)
             if (!this.companySqlWriter) throw new Error('CompanySqlWriter not injected');
             
             const result = await this.companySqlWriter.createCompany(dataToWrite, modifier);
             
-            // 清除快取 (Read might be cached)
+            // 清除快取
             if (this.companyReader.invalidateCache) {
                 this.companyReader.invalidateCache('companyList');
             }
             
-            return result;
+            // Ensure ID is returned
+            return {
+                ...result,
+                companyId: companyId,
+                companyName: companyName
+            };
         } catch (error) {
             console.error('[CompanyService] Create Error:', error);
             throw error;
         }
     }
 
-    // 2. 取得列表
+    // 2. 取得列表 (Read Only - Name/Text Filter Allowed)
     async getCompanyListWithActivity(filters = {}) {
-        // ... (Logic unchanged, relies on _getAllCompanies)
         try {
             let companies = await this._getAllCompanies();
 
@@ -266,7 +281,7 @@ class CompanyService {
 
         } catch (error) {
             console.error('[CompanyService] List Error:', error);
-            // Fallback
+            // Fallback (Legacy)
             try {
                 const sheetRaw = await this.companyReader.getCompanyList();
                 return sheetRaw.map(item => this._toServiceDTO(item));
@@ -277,8 +292,8 @@ class CompanyService {
     }
 
     // 3. 取得詳細資料
-    async getCompanyDetails(companyName) {
-        // ... (Logic unchanged)
+    // [Phase 8] Argument changed from companyName to companyId
+    async getCompanyDetails(companyId) {
         try {
             const [allCompanies, allContacts, allOpportunities, allInteractions, allEventLogs, allPotentialContacts] = await Promise.all([
                 this._getAllCompanies(),
@@ -289,8 +304,8 @@ class CompanyService {
                 this.contactReader.getContacts(3000)
             ]);
 
-            const normalizedTarget = this._normalizeCompanyName(companyName);
-            const companyInfo = allCompanies.find(c => this._normalizeCompanyName(c.companyName) === normalizedTarget);
+            // [Phase 8] Lookup by ID
+            const companyInfo = allCompanies.find(c => c.companyId === companyId);
 
             if (!companyInfo) {
                 return { 
@@ -303,14 +318,20 @@ class CompanyService {
                 };
             }
 
-            const companyId = companyInfo.companyId;
+            // Derive Name for legacy association lookups
+            const companyName = companyInfo.companyName;
+            const normalizedTarget = this._normalizeCompanyName(companyName);
 
+            // Filter related data
             const contacts = allContacts.filter(c => c.companyId === companyId);
+            
+            // Opportunities: Fallback to name matching for legacy data support
             const opportunities = allOpportunities.filter(o => 
                 this._normalizeCompanyName(o.customerCompany) === normalizedTarget
             );
             const relatedOppIds = new Set(opportunities.map(o => o.opportunityId));
             
+            // Interactions & Events: Link by CompanyID or via related OpportunityID
             const interactions = allInteractions.filter(i => 
                 i.companyId === companyId || (i.opportunityId && relatedOppIds.has(i.opportunityId))
             ).sort((a, b) => new Date(b.interactionTime || 0) - new Date(a.interactionTime || 0));
@@ -326,23 +347,23 @@ class CompanyService {
             return { companyInfo, contacts, opportunities, potentialContacts, interactions, eventLogs };
 
         } catch (error) {
-            console.error(`[CompanyService] Details Error (${companyName}):`, error);
+            console.error(`[CompanyService] Details Error (${companyId}):`, error);
             throw error;
         }
     }
 
     // 4. 更新公司
-    async updateCompany(companyName, updateData, user) {
+    // [Phase 8] Argument changed from companyName to companyId
+    async updateCompany(companyId, updateData, user) {
         try {
             const modifier = user.displayName || user.username || 'System';
             
-            // 檢查公司是否存在 & 取得 ID
-            const companyInfo = await this._getCompanyByName(companyName);
-            if (!companyInfo) throw new Error(`找不到公司: ${companyName}`);
-            if (!companyInfo.companyId) throw new Error(`公司資料異常: 無 companyId (${companyName})`);
+            // [Phase 8] Strict ID Lookup
+            const companyInfo = await this._getCompanyById(companyId);
+            if (!companyInfo) throw new Error(`找不到公司 ID: ${companyId}`);
 
             // [Phase 7] SQL Update (by companyId)
-            // No longer uses _findCompanyRowIndex
+            // SQL Writer handles the actual DB update
             const result = await this.companySqlWriter.updateCompany(companyInfo.companyId, updateData, modifier);
             
             // 紀錄 Log
@@ -361,13 +382,15 @@ class CompanyService {
     }
 
     // 5. 刪除公司
-    async deleteCompany(companyName, user) {
+    // [Phase 8] Argument changed from companyName to companyId
+    async deleteCompany(companyId, user) {
         try {
-            // 取得 ID
-            const companyInfo = await this._getCompanyByName(companyName);
-            if (!companyInfo) throw new Error(`找不到公司: ${companyName}`);
+            // [Phase 8] Strict ID Lookup
+            const companyInfo = await this._getCompanyById(companyId);
+            if (!companyInfo) throw new Error(`找不到公司 ID: ${companyId}`);
 
-            // 檢查關聯商機
+            // 檢查關聯商機 (Use name derived from found company to maintain safety for legacy data)
+            const companyName = companyInfo.companyName;
             const opps = await this.opportunityReader.getOpportunities();
             const relatedOpps = opps.filter(o => 
                 this._normalizeCompanyName(o.customerCompany) === this._normalizeCompanyName(companyName)

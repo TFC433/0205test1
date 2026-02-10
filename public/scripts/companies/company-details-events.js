@@ -1,11 +1,10 @@
 /**
  * public/scripts/companies/company-details-events.js
  * 職責：處理「公司詳細資料頁」的所有使用者互動事件
- * * @version 7.8.0 (Final: Manual UX Control)
+ * * @version 7.9.0 (Phase 8: Switch to ID-based Operations)
  * * @description 
- * * 1. 使用 { skipRefresh: true } 接管 api.js 的自動刷新行為，還原 0109 的 SPA 操作體驗。
- * * 2. 依賴 company-details-ui.js 修復後的 Toast 容器顯示通知。
- * * 3. 處理雙重編碼與特殊字元路由問題。
+ * * 1. [Contract] Save, Delete, Generate AI 改為使用 companyId。
+ * * 2. [UX] 支援 ID 基礎的頁面導航與刷新。
  */
 
 let _currentCompanyInfo = null;
@@ -130,11 +129,9 @@ async function saveCompanyInfo(event) {
 
     const formData = new FormData(form);
     const updateData = Object.fromEntries(formData.entries());
-    const oldCompanyName = _currentCompanyInfo.companyName;
+    // [Contract Fix] 使用 companyId 更新
+    const companyId = _currentCompanyInfo.companyId; 
     
-    // [Security] 雙重編碼，防止特殊字元破壞 URL
-    const encodedOldName = encodeURIComponent(encodeURIComponent(oldCompanyName));
-
     if (!updateData.companyName || updateData.companyName.trim() === '') {
         if(window.showNotification) showNotification('公司名稱為必填項目', 'warning');
         return;
@@ -149,8 +146,8 @@ async function saveCompanyInfo(event) {
     }
 
     try {
-        // [Critical] skipRefresh: true -> 我們自己處理 UI 更新，不讓 api.js 刷新頁面
-        const result = await authedFetch(`/api/companies/${encodedOldName}`, {
+        // [Contract Fix] skipRefresh: true -> 我們自己處理 UI 更新，不讓 api.js 刷新頁面
+        const result = await authedFetch(`/api/companies/${companyId}`, {
             method: 'PUT',
             body: JSON.stringify(updateData),
             headers: { 'Content-Type': 'application/json' },
@@ -165,18 +162,14 @@ async function saveCompanyInfo(event) {
             // 2. 更新本地快取
             _currentCompanyInfo = { ..._currentCompanyInfo, ...updateData };
 
-            // 3. 判斷是否改名
-            if (updateData.companyName !== oldCompanyName) {
-                // 如果改名，必須更新 URL
-                if (window.router) {
-                    window.router.push(`/companies/${encodeURIComponent(updateData.companyName)}/details`);
-                } else {
-                    window.location.hash = `#/companies/${encodeURIComponent(updateData.companyName)}`;
-                }
-            } else {
-                // 如果沒改名，直接切換回檢視模式 (SPA 體驗)
-                toggleCompanyEditMode(false);
+            // 3. 判斷是否改名 (保持 SPA 體驗)
+            // 雖然現在用 ID，但為了 URL 美觀，若 Router 支援仍可更新 URL
+            if (updateData.companyName !== _currentCompanyInfo.companyName) {
+                // do nothing strictly for ID routing unless we want to update displayed URL
             }
+
+            toggleCompanyEditMode(false);
+
         } else {
             throw new Error(result.error || '儲存失敗');
         }
@@ -211,10 +204,11 @@ async function generateCompanyProfile() {
     if(typeof showLoading === 'function') showLoading('AI 正在撰寫簡介並查找資料...');
     
     try {
-        const encodedCompanyName = encodeURIComponent(_currentCompanyInfo.companyName);
+        // [Contract Fix] 使用 companyId 呼叫
+        const companyId = _currentCompanyInfo.companyId;
         
         // [Critical] AI 生成是中間狀態，絕對不能刷新頁面
-        const result = await authedFetch(`/api/companies/${encodedCompanyName}/generate-profile`, {
+        const result = await authedFetch(`/api/companies/${companyId}/generate-profile`, {
             method: 'POST',
             body: JSON.stringify({ userKeywords: keywords }),
             skipRefresh: true 
@@ -251,15 +245,15 @@ async function generateCompanyProfile() {
 async function confirmDeleteCompany() {
     if (!_currentCompanyInfo) return;
     const name = _currentCompanyInfo.companyName;
+    const companyId = _currentCompanyInfo.companyId;
+
     const message = `確定要刪除「${name}」嗎？此操作無法復原。`;
     
     const performDelete = async () => {
         if(typeof showLoading === 'function') showLoading('刪除中...');
         try {
-            const safeName = encodeURIComponent(encodeURIComponent(name));
-            
-            // [Critical] 刪除成功後需要手動跳轉，所以 skipRefresh
-            const result = await authedFetch(`/api/companies/${safeName}`, { 
+            // [Contract Fix] 使用 companyId 刪除
+            const result = await authedFetch(`/api/companies/${companyId}`, { 
                 method: 'DELETE',
                 skipRefresh: true
             });
@@ -311,7 +305,8 @@ async function confirmDeleteOppInDetails(rowIndex, oppName) {
                 // 刷新頁面以更新列表
                 setTimeout(() => {
                     if (window.loadCompanyDetailsPage) {
-                        window.loadCompanyDetailsPage(encodeURIComponent(_currentCompanyInfo.companyName));
+                        // [Contract Fix] 傳遞 ID
+                        window.loadCompanyDetailsPage(_currentCompanyInfo.companyId);
                     } else {
                         window.location.reload();
                     }
@@ -400,7 +395,7 @@ async function handleSaveContact(e) {
         // 重新載入頁面 (聯絡人更新較複雜，建議重整)
         setTimeout(() => {
             if (window.loadCompanyDetailsPage) {
-                window.loadCompanyDetailsPage(encodeURIComponent(_currentCompanyInfo.companyName));
+                window.loadCompanyDetailsPage(_currentCompanyInfo.companyId);
             } else {
                 window.location.reload();
             }

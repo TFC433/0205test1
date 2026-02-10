@@ -1,12 +1,11 @@
 /**
  * controllers/company.controller.js
  * 公司模組控制器
- * * @version 7.3.0 (Final Fix: Search Filters & Double Decoding)
- * * @date 2026-01-16
+ * * @version 8.0.0 (Phase 8: ID-based Operations)
+ * * @date 2026-02-10
  * * @description
- * * 1. [Fix] getCompanies 支援過濾參數 (q, type, stage, rating)，解決搜尋失效問題。
- * * 2. [Fix] 實作 URI Double Decoding，防止特殊字元導致後端崩潰。
- * * 3. [Architecture] 採用 Class 結構以支援 Service Container 注入。
+ * * 1. [Contract] getCompanyDetails, updateCompany, deleteCompany 改為接收 companyId。
+ * * 2. [Refactor] 移除 decodeURIComponent (ID 不需解碼)。
  */
 
 const { handleApiError } = require('../middleware/error.middleware');
@@ -65,14 +64,15 @@ class CompanyController {
 
     /**
      * 取得公司詳細資料 (含關聯資料)
-     * GET /api/companies/:companyName/details
+     * GET /api/companies/:companyId/details
      */
     getCompanyDetails = async (req, res) => {
         try {
-            // [Security] 針對 URL 參數進行解碼，防止 % 符號或斜線造成錯誤
-            const companyName = decodeURIComponent(req.params.companyName);
+            // [Contract Fix] 使用 companyId
+            const companyId = req.params.companyId;
             
-            const result = await this.companyService.getCompanyDetails(companyName);
+            // [Note] Service 必須支援 ID 查詢 (Phase 7+ default)
+            const result = await this.companyService.getCompanyDetails(companyId);
             res.json({ success: true, data: result });
         } catch (error) {
             handleApiError(res, error, 'Get Company Details');
@@ -81,15 +81,15 @@ class CompanyController {
 
     /**
      * 更新公司資料
-     * PUT /api/companies/:companyName
+     * PUT /api/companies/:companyId
      */
     updateCompany = async (req, res) => {
         try {
-            const companyName = decodeURIComponent(req.params.companyName);
+            const companyId = req.params.companyId;
             
             // 呼叫 Service 更新邏輯
             const result = await this.companyService.updateCompany(
-                companyName, 
+                companyId, 
                 req.body, 
                 req.user
             );
@@ -102,13 +102,13 @@ class CompanyController {
 
     /**
      * 刪除公司
-     * DELETE /api/companies/:companyName
+     * DELETE /api/companies/:companyId
      */
     deleteCompany = async (req, res) => {
         try {
-            const companyName = decodeURIComponent(req.params.companyName);
+            const companyId = req.params.companyId;
             
-            const result = await this.companyService.deleteCompany(companyName, req.user);
+            const result = await this.companyService.deleteCompany(companyId, req.user);
             res.json(result);
         } catch (error) {
             // 特別處理「有關聯資料無法刪除」的邏輯錯誤，回傳 400 讓前端顯示 Toast

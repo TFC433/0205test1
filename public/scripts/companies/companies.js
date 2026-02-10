@@ -1,31 +1,45 @@
 /**
  * public/scripts/companies/companies.js
  * 職責：載入公司詳細資料頁的數據，並協調UI渲染與事件綁定模組
- * * @version 7.4.0 (Restored from 0109)
- * * @description 嚴格還原 0109 版本的主控制器邏輯。
+ * * @version 7.6.2 (Phase 8: ID Guard & Layout Fix)
+ * * @date 2026-02-10
+ * * @description 
+ * * 1. [Fix] Added null check for companyInfo.
+ * * 2. [Layout] Wrapped Event section in dashboard-widget grid-col-12.
+ * * 3. [Contract] Enforced ID-based API calls.
  */
 
 /**
  * 載入並渲染公司詳細資料頁面的主函式
- * @param {string} encodedCompanyName - URL編碼過的公司名稱
+ * @param {string} companyId - 公司 ID (UUID)
  */
-async function loadCompanyDetailsPage(encodedCompanyName) {
+async function loadCompanyDetailsPage(companyId) {
     const container = document.getElementById('page-company-details');
-    // 解碼名稱
-    const companyName = decodeURIComponent(encodedCompanyName);
+    // ID 通常不需要解碼，但保留以防萬一
+    const safeId = decodeURIComponent(companyId);
     
     // 若找不到專屬容器，嘗試尋找通用容器 (v7.0 相容)
     const targetContainer = container || document.getElementById('page-content') || document.body;
 
-    targetContainer.innerHTML = `<div class="loading show" style="padding-top: 100px;"><div class="spinner"></div><p>正在載入 ${companyName} 的詳細資料...</p></div>`;
+    targetContainer.innerHTML = `<div class="loading show" style="padding-top: 100px;"><div class="spinner"></div><p>正在載入公司資料...</p></div>`;
 
     try {
-        const result = await authedFetch(`/api/companies/${encodedCompanyName}/details`);
+        // [Contract Fix] 使用 ID 呼叫 API
+        const result = await authedFetch(`/api/companies/${safeId}/details`);
         if (!result.success) throw new Error(result.error || '無法載入公司資料');
 
         // 從解構賦值中移除 interactions (依照 0109 邏輯)
         const { companyInfo, contacts = [], opportunities = [], potentialContacts = [], eventLogs = [] } = result.data;
         
+        // [Guard] 檢查 companyInfo 是否存在
+        if (!companyInfo) {
+            console.error('[CompanyDetails] companyInfo is null for ID:', safeId);
+            targetContainer.innerHTML = `<div class="alert alert-error" style="margin: 20px;">
+                <strong>資料錯誤</strong>：找不到 ID 為「${safeId}」的公司資料，可能已被刪除。
+            </div>`;
+            return;
+        }
+
         // 1. 設定頁面標題
         const titleEl = document.getElementById('page-title');
         const subtitleEl = document.getElementById('page-subtitle');
@@ -33,11 +47,13 @@ async function loadCompanyDetailsPage(encodedCompanyName) {
         if (subtitleEl) subtitleEl.textContent = '公司詳細資料與關聯活動';
 
         // 2. 渲染頁面骨架 (垂直瀑布流 - 0109 結構)
-        // 注意：這裡依賴 company-details-ui.js 中的渲染函式
+        // [UI Fix] 將 Event 區塊包裹在 dashboard-widget grid-col-12 中以對齊 Grid
         targetContainer.innerHTML = `
             ${typeof renderCompanyInfoCard === 'function' ? renderCompanyInfoCard(companyInfo) : '<div class="alert alert-error">UI渲染函式缺失</div>'}
 
-            <div id="tab-content-company-events" class="tab-content active" style="margin-bottom: var(--spacing-6);"></div>
+            <div class="dashboard-widget grid-col-12" style="margin-top: var(--spacing-6);">
+                <div id="tab-content-company-events" class="tab-content active"></div>
+            </div>
 
             <div class="dashboard-widget grid-col-12" style="margin-top: var(--spacing-6);">
                 <div class="widget-header"><h2 class="widget-title">相關機會案件 (${opportunities.length})</h2></div>

@@ -1,8 +1,12 @@
 /**
  * public/scripts/companies/company-list.js
  * 職責：管理「公司總覽列表頁」
- * * @version 7.2.0 (Fix: Toast Styles & Double Encoding)
- * * @description 完整包含 CSS 注入 (含 Toast)、路由註冊、雙重編碼刪除邏輯。
+ * * @version 7.5.0 (Phase 8: Strict ID Navigation)
+ * * @date 2026-02-10
+ * * @description 
+ * * 1. [Fix] handleCompanyListClick: Navigation payload must use companyId.
+ * * 2. [Fix] submitQuickCreateCompany: Navigation after create uses companyId.
+ * * 3. [Contract] All operations (delete, navigate) use companyId exclusively.
  */
 
 // ==================== 全域變數 ====================
@@ -10,9 +14,8 @@ let allCompaniesData = [];
 let companyListFilters = { type: 'all', stage: 'all', rating: 'all' };
 let currentSort = { field: 'lastActivity', direction: 'desc' };
 
-// ==================== 1. 動態樣式注入 (含 Toast 修復) ====================
+// ==================== 1. 動態樣式注入 ====================
 function _injectCompanyListStyles() {
-    // 避免重複注入
     if (document.getElementById('company-list-upgraded-styles')) return;
 
     const style = document.createElement('style');
@@ -42,7 +45,7 @@ function _injectCompanyListStyles() {
         .text-link { color: var(--accent-blue, #2563eb); text-decoration: none; font-weight: 500; }
         .text-link:hover { text-decoration: underline; }
 
-        /* ★★★ Critical Fix: Toast Notification Styles ★★★ */
+        /* Toast Notification Styles */
         #toast-container {
             position: fixed;
             bottom: 20px;
@@ -64,12 +67,9 @@ function _injectCompanyListStyles() {
             opacity: 0;
             transform: translateY(20px);
             transition: all 0.3s cubic-bezier(0.68, -0.55, 0.27, 1.55);
-            border-left: 4px solid #3b82f6; /* Default Blue */
+            border-left: 4px solid #3b82f6;
         }
-        .toast.show {
-            opacity: 1;
-            transform: translateY(0);
-        }
+        .toast.show { opacity: 1; transform: translateY(0); }
         .toast-success { border-left-color: #22c55e; }
         .toast-error { border-left-color: #ef4444; }
         .toast-warning { border-left-color: #f59e0b; }
@@ -79,15 +79,15 @@ function _injectCompanyListStyles() {
 }
 
 // ==================== 2. 核心功能：刪除邏輯 ====================
-async function executeDeleteCompany(encodedName) {
-    if (!encodedName) return;
-    const name = decodeURIComponent(encodedName);
+async function executeDeleteCompany(companyId, companyName) {
+    if (!companyId) return;
+    const name = companyName || '此公司';
     
     const confirmFunc = window.showConfirmDialog || window.confirmAction || window.confirm;
     
     // 定義實際執行刪除的閉包
     const doDelete = async () => {
-        await performDeleteAPI(name);
+        await performDeleteAPI(companyId);
     };
 
     if (typeof confirmFunc === 'function' && window.showConfirmDialog) {
@@ -99,14 +99,12 @@ async function executeDeleteCompany(encodedName) {
     }
 }
 
-async function performDeleteAPI(rawName) {
+async function performDeleteAPI(companyId) {
     if (typeof showLoading === 'function') showLoading('正在刪除...');
     
-    // ★★★ Critical Fix: 雙重編碼防止 URI malformed ★★★
-    const safeName = encodeURIComponent(encodeURIComponent(rawName));
-
+    // [Contract Fix] 使用 ID 進行刪除
     try {
-        const res = await authedFetch(`/api/companies/${safeName}`, { method: 'DELETE' });
+        const res = await authedFetch(`/api/companies/${companyId}`, { method: 'DELETE' });
         
         const toastFunc = window.showNotification || window.showToast;
 
@@ -135,7 +133,6 @@ async function loadCompaniesListPage() {
     const container = document.getElementById('page-companies');
     if (!container) return;
 
-    // ★★★ 注入樣式 (含 Toast) ★★★
     _injectCompanyListStyles();
 
     container.onclick = handleCompanyListClick;
@@ -253,17 +250,23 @@ function handleCompanyListClick(e) {
         case 'sort': handleCompanySort(payload.field); break;
         case 'toggle-quick-create': toggleQuickCreateCard(payload.show === 'true'); break;
         case 'submit-quick-create': submitQuickCreateCompany(); break;
-        case 'delete-company': executeDeleteCompany(payload.name).catch(console.error); break;
+        case 'delete-company': executeDeleteCompany(payload.id, payload.name).catch(console.error); break;
         case 'navigate':
             e.preventDefault();
             let params = {};
             if (payload.params) {
                 try { params = JSON.parse(payload.params); } catch (err) { }
             }
-            if (window.CRM_APP && window.CRM_APP.navigateTo) {
-                CRM_APP.navigateTo(payload.page, params);
-            } else if (window.router) {
-                window.router.push(`/companies/${encodeURIComponent(params.companyName)}/details`);
+            
+            // [Phase 8 Strict Fix] 確保只使用 companyId 進行導航
+            const targetId = params.companyId || payload.id;
+            
+            if (window.CRM_APP && window.CRM_APP.navigateTo && targetId) {
+                CRM_APP.navigateTo(payload.page, { companyId: targetId });
+            } else if (window.router && targetId) {
+                window.router.push(`/companies/${encodeURIComponent(targetId)}/details`);
+            } else {
+                console.error('[Navigation] Missing companyId for company details');
             }
             break;
     }
@@ -337,8 +340,13 @@ function renderCompaniesTable(companies) {
         const typeColor = typeColors.get(c.companyType) || '#9ca3af';
         const stageColor = stageColors.get(c.customerStage) || '#6b7280';
         const ratingColor = ratingColors.get(c.engagementRating) || '#6b7280';
-        const encodedName = encodeURIComponent(c.companyName || '');
-        const navParams = JSON.stringify({ companyName: c.companyName || '' }).replace(/'/g, "&apos;").replace(/"/g, '&quot;');
+        
+        // [Phase 8 Strict Fix] 建構參數：只傳 companyId
+        const navParams = JSON.stringify({ 
+            companyId: c.companyId
+        }).replace(/'/g, "&apos;").replace(/"/g, '&quot;');
+        
+        const safeName = (c.companyName || '').replace(/"/g, '&quot;');
 
         html += `
             <tr>
@@ -346,7 +354,7 @@ function renderCompaniesTable(companies) {
                 <td style="white-space:nowrap;">${c.lastActivity ? new Date(c.lastActivity).toLocaleDateString() : '-'}</td>
                 <td><span class="comp-type-chip" style="background:${typeColor}">${c.companyType || '未分類'}</span></td>
                 <td>
-                    <a href="#" class="text-link" data-action="navigate" data-page="company-details" data-params="${navParams}">
+                    <a href="#" class="text-link" data-action="navigate" data-page="company-details" data-params="${navParams}" data-id="${c.companyId}">
                         <strong>${c.companyName || '-'}</strong>
                     </a>
                 </td>
@@ -354,7 +362,7 @@ function renderCompaniesTable(companies) {
                 <td><span class="comp-status-badge" style="background:${stageColor}">${c.customerStage || '-'}</span></td>
                 <td><span class="comp-status-badge" style="background:${ratingColor}">${c.engagementRating || '-'}</span></td>
                 <td style="text-align:center;">
-                    <button class="btn-mini-delete" title="刪除公司" data-action="delete-company" data-name="${encodedName}">
+                    <button class="btn-mini-delete" title="刪除公司" data-action="delete-company" data-id="${c.companyId}" data-name="${safeName}">
                         🗑️
                     </button>
                 </td>
@@ -401,14 +409,19 @@ async function submitQuickCreateCompany() {
             
             toggleQuickCreateCard(false);
             if (window.CRM_APP && window.CRM_APP.navigateTo) {
-                CRM_APP.navigateTo('company-details', { companyName: encodeURIComponent(res.data.companyName || res.data.name) });
+                // [Phase 8 Fix] 使用 companyId 導航
+                CRM_APP.navigateTo('company-details', { 
+                    companyId: res.data.companyId 
+                });
             } else if (window.router) {
-                window.router.push(`/companies/${encodeURIComponent(res.data.companyName || res.data.name)}/details`);
+                window.router.push(`/companies/${encodeURIComponent(res.data.companyId)}/details`);
             }
         } else if (res.reason === 'EXISTS') {
             if(confirm(`公司「${name}」已存在，是否直接前往查看？`)) {
-                if (window.CRM_APP && window.CRM_APP.navigateTo) {
-                    CRM_APP.navigateTo('company-details', { companyName: encodeURIComponent(res.data.companyName || res.data.name) });
+                if (window.CRM_APP && window.CRM_APP.navigateTo && res.data.companyId) {
+                    CRM_APP.navigateTo('company-details', { 
+                        companyId: res.data.companyId 
+                    });
                 }
             }
         } else { 

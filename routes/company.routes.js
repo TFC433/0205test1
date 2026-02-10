@@ -1,8 +1,8 @@
 // routes/company.routes.js
 /**
  * Company Routes
- * * @version 5.1.0 (Phase 3 - Service Locator Pattern)
- * @date 2026-01-13
+ * * @version 8.0.0 (Phase 8: Switch to ID-based Routes)
+ * @date 2026-02-10
  */
 
 const express = require('express');
@@ -32,24 +32,27 @@ router.post('/', (req, res, next) => {
 });
 
 // --- AI 路由 (External Controller) ---
-// POST /api/companies/:companyName/generate-profile
-// 如果 ExternalController 還沒重構，直接用舊的
-router.post('/:companyName/generate-profile', externalController.generateCompanyProfile);
+// POST /api/companies/:companyId/generate-profile
+// [Contract Fix] Changed param to :companyId
+router.post('/:companyId/generate-profile', externalController.generateCompanyProfile);
 
 // --- 公司路由 ---
 
-// GET /api/companies/:companyName/details
-router.get('/:companyName/details', (req, res, next) => {
+// GET /api/companies/:companyId/details
+// [Contract Fix] Changed param to :companyId
+router.get('/:companyId/details', (req, res, next) => {
     getController(req).getCompanyDetails(req, res, next);
 });
 
-// PUT /api/companies/:companyName
-router.put('/:companyName', (req, res, next) => {
+// PUT /api/companies/:companyId
+// [Contract Fix] Changed param to :companyId
+router.put('/:companyId', (req, res, next) => {
     getController(req).updateCompany(req, res, next);
 });
 
-// DELETE /api/companies/:companyName
-router.delete('/:companyName', (req, res, next) => {
+// DELETE /api/companies/:companyId
+// [Contract Fix] Changed param to :companyId
+router.delete('/:companyId', (req, res, next) => {
     getController(req).deleteCompany(req, res, next);
 });
 
